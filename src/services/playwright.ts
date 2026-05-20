@@ -112,6 +112,54 @@ export async function initPlaywright(headless = true, browserType: BrowserType =
 
   // Keep an active page to fetch PoW headers on demand
   activePage = await context.newPage();
+
+  const hasCredentials = !!(process.env.QWEN_EMAIL && process.env.QWEN_PASSWORD);
+  const hasValidSession = await checkValidSession();
+
+  if (!hasValidSession && !hasCredentials) {
+    console.warn('[Playwright] No valid session AND no credentials in .env. Manual login will be required.');
+  }
+
+  if (!hasValidSession) {
+    await attemptAutoLogin();
+  }
+}
+
+async function checkValidSession(): Promise<boolean> {
+  if (!activePage) return false;
+  try {
+    const cookies = await activePage.context().cookies();
+    const hasAuthCookie = cookies.some(c => c.name.toLowerCase().includes('token') || c.name.toLowerCase().includes('session'));
+    if (!hasAuthCookie) return false;
+    await activePage.goto('https://chat.qwen.ai/', { waitUntil: 'domcontentloaded', timeout: 10000 });
+    const isLogged = !activePage.url().includes('auth') && !activePage.url().includes('login');
+    return isLogged;
+  } catch {
+    return false;
+  }
+}
+
+async function attemptAutoLogin(): Promise<void> {
+  const email = process.env.QWEN_EMAIL;
+  const password = process.env.QWEN_PASSWORD;
+  if (!email || !password) return;
+  console.log('[Playwright] Attempting auto-login with credentials from .env...');
+  try {
+    const success = await loginToQwen(email, password);
+    if (success) {
+      console.log('[Playwright] Auto-login successful.');
+      return;
+    }
+    console.warn('[Playwright] API login failed, trying UI fallback...');
+    const uiSuccess = await loginToQwenUI(email, password);
+    if (uiSuccess) {
+      console.log('[Playwright] UI login fallback successful.');
+    } else {
+      console.warn('[Playwright] Both API and UI login failed. Manual login may be required.');
+    }
+  } catch (err: any) {
+    console.error('[Playwright] Auto-login error:', err.message);
+  }
 }
 
 export async function closePlaywright() {
@@ -129,7 +177,7 @@ export async function loginToQwen(email: string, password: string): Promise<bool
   console.log(`[Playwright] Attempting API login for ${email}...`);
   
   // Navigate to auth page to set up context/cookies
-  await activePage.goto('https://chat.qwen.ai/auth', { waitUntil: 'networkidle' });
+  await activePage.goto('https://chat.qwen.ai/auth', { waitUntil: 'domcontentloaded' });
 
   // Qwen expects SHA256 hashed password
   const hashedPassword = crypto.createHash('sha256').update(password).digest('hex');
@@ -157,7 +205,7 @@ export async function loginToQwen(email: string, password: string): Promise<bool
   if (result.ok) {
     console.log('[Playwright] API login request successful.');
     // Navigate to home to confirm session
-    await activePage.goto('https://chat.qwen.ai/', { waitUntil: 'networkidle' });
+    await activePage.goto('https://chat.qwen.ai/', { waitUntil: 'domcontentloaded' });
     const isLogged = !(activePage.url().includes('auth') || activePage.url().includes('login'));
     if (isLogged) {
        console.log('[Playwright] Login confirmed.');
@@ -166,6 +214,48 @@ export async function loginToQwen(email: string, password: string): Promise<bool
   }
 
   console.error('[Playwright] Login failed:', result.data || result.error);
+  return false;
+}
+
+async function loginToQwenUI(email: string, password: string): Promise<boolean> {
+  if (!activePage) throw new Error('Playwright not initialized');
+
+  console.log('[Playwright] Attempting UI login...');
+  await activePage.goto('https://chat.qwen.ai/auth', { waitUntil: 'domcontentloaded' });
+  await sleep(2000);
+
+  if (!activePage.url().includes('/auth')) {
+    console.log('[Playwright] Already logged in');
+    return true;
+  }
+
+  try {
+    await activePage.waitForSelector('input[type="email"], input[placeholder*="Email"]', { timeout: 5000 });
+  } catch {
+    if (activePage.url().includes('/auth')) throw new Error('Email input not found');
+    console.log('[Playwright] Already logged in');
+    return true;
+  }
+
+  console.log('[Playwright] UI: Filling email...');
+  await activePage.fill('input[type="email"], input[placeholder*="Email"]', email);
+  await activePage.keyboard.press('Enter');
+  await sleep(1000);
+
+  await activePage.waitForSelector('input[type="password"]', { timeout: 10000 });
+  console.log('[Playwright] UI: Filling password...');
+  await activePage.fill('input[type="password"]', password);
+  await activePage.keyboard.press('Enter');
+
+  await sleep(2000);
+
+  const isLogged = !activePage.url().includes('auth') && !activePage.url().includes('login');
+  if (isLogged) {
+    console.log('[Playwright] UI login OK');
+    return true;
+  }
+
+  console.log('[Playwright] UI login failed');
   return false;
 }
 
