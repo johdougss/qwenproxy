@@ -112,6 +112,48 @@ export async function initPlaywright(headless = true, browserType: BrowserType =
 
   // Keep an active page to fetch PoW headers on demand
   activePage = await context.newPage();
+
+  const hasCredentials = !!(process.env.QWEN_EMAIL && process.env.QWEN_PASSWORD);
+  const hasValidSession = await checkValidSession();
+
+  if (!hasValidSession && !hasCredentials) {
+    console.warn('[Playwright] No valid session AND no credentials in .env. Manual login will be required.');
+  }
+
+  if (!hasValidSession) {
+    await attemptAutoLogin();
+  }
+}
+
+async function checkValidSession(): Promise<boolean> {
+  if (!activePage) return false;
+  try {
+    const cookies = await activePage.context().cookies();
+    const hasAuthCookie = cookies.some(c => c.name.toLowerCase().includes('token') || c.name.toLowerCase().includes('session'));
+    if (!hasAuthCookie) return false;
+    await activePage.goto('https://chat.qwen.ai/', { waitUntil: 'domcontentloaded', timeout: 10000 });
+    const isLogged = !activePage.url().includes('auth') && !activePage.url().includes('login');
+    return isLogged;
+  } catch {
+    return false;
+  }
+}
+
+async function attemptAutoLogin(): Promise<void> {
+  const email = process.env.QWEN_EMAIL;
+  const password = process.env.QWEN_PASSWORD;
+  if (!email || !password) return;
+  console.log('[Playwright] Attempting auto-login with credentials from .env...');
+  try {
+    const success = await loginToQwen(email, password);
+    if (success) {
+      console.log('[Playwright] Auto-login successful.');
+    } else {
+      console.warn('[Playwright] Auto-login failed. Manual login may be required.');
+    }
+  } catch (err: any) {
+    console.error('[Playwright] Auto-login error:', err.message);
+  }
 }
 
 export async function closePlaywright() {

@@ -17,7 +17,6 @@ async function main() {
   const email = process.env.QWEN_EMAIL;
   const password = process.env.QWEN_PASSWORD;
 
-  // Parse browser type from args or env
   let browserType: BrowserType = 'chromium';
   const browserArg = process.argv.find(arg => arg.startsWith('--browser='));
   if (browserArg) {
@@ -28,20 +27,19 @@ async function main() {
 
   if (email && password) {
     console.log(`[Login] Credentials found in .env. Attempting automated API login using ${browserType}...`);
-    await initPlaywright(true, browserType); // Can be headless
+    await initPlaywright(true, browserType);
     const success = await loginToQwen(email, password);
     if (success) {
-      console.log('[Login] Automated login successful! Session saved.');
+      console.log('[Login] Automated login successful! Session saved.');       
       await closePlaywright();
       process.exit(0);
     } else {
-      console.error('[Login] Automated login failed. Falling back to manual login...');
-      await closePlaywright();
+      console.warn('[Login] Automated login failed. Falling back to manual login...');
     }
   }
 
   console.log(`Opening ${browserType} to allow manual login...`);
-  await initPlaywright(false, browserType); // false = not headless
+  await initPlaywright(false, browserType);
   if (activePage) {
     await activePage.goto('https://chat.qwen.ai/auth', { waitUntil: 'domcontentloaded' });
   } else {
@@ -50,8 +48,7 @@ async function main() {
   }
   console.log('Browser opened. Please login to chat.qwen.ai.');
   console.log('Once you are fully logged in and can see the chat interface, close the browser window or press Ctrl+C here.');
-  
-  // Wait indefinitely until user closes the process
+
   process.on('SIGINT', async () => {
     console.log('Closing browser...');
     await closePlaywright();
@@ -59,4 +56,4 @@ async function main() {
   });
 }
 
-main();
+main().catch(console.error);
