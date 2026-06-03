@@ -6,7 +6,7 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
-import { robustParseJSON } from '../utils/json.ts';
+import { robustParseJSON } from '../utils/json.js';
 import { logger } from '../core/logger.js';
 import type { ParsedToolCall } from './types';
 import type { FunctionToolDefinition } from './types';
