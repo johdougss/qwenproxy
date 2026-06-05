@@ -5,7 +5,7 @@
  */
 
 import { Context } from "hono";
-import { getQwenHeaders } from "../services/playwright.ts";
+import { getQwenHeaders } from "../services/playwright.js";
 import crypto from "crypto";
 
 interface STSResponse {

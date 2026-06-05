@@ -21,6 +21,7 @@ export class MemoryCache {
   private cleanupInterval: NodeJS.Timeout | null
   private maxEntries: number
   private totalBytes: number
+  private scanRegexCache: Map<string, RegExp>
 
   constructor(options?: { prefix?: string; defaultTTL?: number; maxEntries?: number }) {
     this.prefix = options?.prefix || 'qwenproxy:'
@@ -29,12 +30,14 @@ export class MemoryCache {
     this.store = new Map()
     this.totalBytes = 0
     this.cleanupInterval = null
+    this.scanRegexCache = new Map()
 
     this.startCleanup()
   }
 
   private entryByteSize(key: string, value: any): number {
-    return Buffer.byteLength(key) + Buffer.byteLength(JSON.stringify(value))
+    const valueStr = typeof value === 'string' ? value : JSON.stringify(value)
+    return Buffer.byteLength(key) + Buffer.byteLength(valueStr || '')
   }
 
   private evictLRU(): void {
@@ -63,11 +66,9 @@ export class MemoryCache {
   }
 
   async set<T>(key: CacheKey, value: T, ttl?: number): Promise<void> {
-    const serialized = JSON.stringify(value)
-    const valueBytes = Buffer.byteLength(serialized)
     const effectiveTTL = ttl || this.defaultTTL
     const fullKey = this.prefix + key
-    const entrySize = Buffer.byteLength(fullKey) + valueBytes
+    const entrySize = this.entryByteSize(fullKey, value)
     
     if (this.store.has(fullKey)) {
       const oldEntry = this.store.get(fullKey)
@@ -85,7 +86,7 @@ export class MemoryCache {
     this.totalBytes += entrySize
     
     metrics.increment('cache.set')
-    metrics.histogram('cache.value.size', valueBytes)
+    metrics.histogram('cache.value.size', entrySize)
   }
 
   async get<T>(key: CacheKey): Promise<T | null> {

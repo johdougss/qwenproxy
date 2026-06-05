@@ -70,10 +70,10 @@ app.notFound((c) => c.json({ error: 'Not found' }, 404))
 export async function startServer(): Promise<void> {
   await cache.connect()
 
-  const { loadAccounts } = await import('../core/accounts.ts')
+  const { loadAccounts } = await import('../core/accounts.js')
   const accounts = loadAccounts()
 
-  const { initPlaywright, initPlaywrightForAccount, getQwenHeaders } = await import('../services/playwright.ts')
+  const { initPlaywright, initPlaywrightForAccount, getQwenHeaders } = await import('../services/playwright.js')
   
   await initPlaywright(config.browser.headless)
   
@@ -87,7 +87,7 @@ export async function startServer(): Promise<void> {
       )
     )
     console.log('[Server] Pre-fetching headers for all accounts in background...')
-    const { warmAllPools } = await import('../services/qwen.ts')
+    const { warmAllPools } = await import('../services/qwen.js')
     warmAllPools(accounts.map(a => a.id)).catch(() => {})
   }
 
@@ -111,7 +111,7 @@ export async function startServer(): Promise<void> {
     await cache.close()
     const { closePlaywright } = await import('../services/playwright.js')
     await closePlaywright()
-    const { closeDatabase } = await import('../core/database.ts')
+    const { closeDatabase } = await import('../core/database.js')
     closeDatabase()
     server?.close()
     process.exit(0)

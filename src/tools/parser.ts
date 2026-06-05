@@ -136,19 +136,67 @@ function parseRecoverableXmlToolCall(
   return { name: toolName, arguments: args };
 }
 
+// ─── String-Aware Tag Detection ─────────────────────────────────────────────────
+
+function findToolEndIndex(buffer: string): number {
+  const tagLen = TOOL_END.length;
+  const limit = buffer.length - tagLen;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i <= limit; i++) {
+    const ch = buffer[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\') { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString || ch !== '<') continue;
+    let match = true;
+    for (let j = 1; j < tagLen; j++) {
+      const c = buffer.charCodeAt(i + j);
+      const t = TOOL_END.charCodeAt(j);
+      if (c !== t && (c | 0x20) !== (t | 0x20)) { match = false; break; }
+    }
+    if (match) return i;
+  }
+  return -1;
+}
+
 // ─── Partial Tag Detection ─────────────────────────────────────────────────────
 
 const TOOL_START_LITERAL = '<tool_call>';
 
 function findPartialToolOpenIndex(buffer: string): number {
-  const lower = buffer.toLowerCase();
-  // Check if there's a partial opening tag like `<tool_call` without closing `>`
-  const idx = lower.lastIndexOf('<tool_call');
-  if (idx !== -1 && lower.indexOf('>', idx) === -1) return idx;
+  const prefix = '<tool_call';
+  const prefixLen = prefix.length;
+  const bufLen = buffer.length;
 
-  // Check for partial prefix at end (e.g. `<tool`, `<tool_`, `<tool_c`)
+  let lastPartialIdx = -1;
+  for (let i = bufLen - 1; i >= Math.max(0, bufLen - prefixLen - 1); i--) {
+    if (buffer[i] !== '<') continue;
+    let match = true;
+    for (let j = 1; j < prefixLen && i + j < bufLen; j++) {
+      const c = buffer.charCodeAt(i + j);
+      const t = prefix.charCodeAt(j);
+      if (c !== t && ((c | 0x20) !== (t | 0x20))) { match = false; break; }
+    }
+    if (match) {
+      lastPartialIdx = i;
+      break;
+    }
+  }
+  if (lastPartialIdx !== -1 && buffer.indexOf('>', lastPartialIdx) === -1) return lastPartialIdx;
+
   for (let i = 1; i < TOOL_START_LITERAL.length; i++) {
-    if (lower.endsWith(TOOL_START_LITERAL.substring(0, i))) return buffer.length - i;
+    const sub = TOOL_START_LITERAL.substring(0, i);
+    const subLen = sub.length;
+    if (bufLen < subLen) continue;
+    let match = true;
+    for (let j = 0; j < subLen; j++) {
+      const c = buffer.charCodeAt(bufLen - subLen + j);
+      const t = sub.charCodeAt(j);
+      if (c !== t && (c | 0x20) !== (t | 0x20)) { match = false; break; }
+    }
+    if (match) return bufLen - i;
   }
   return -1;
 }
@@ -211,10 +259,8 @@ export class StreamingToolParser {
           }
           break;
         }
-      } else {
-        // Inside tool: look for </tool_call>
-        const lowerBuffer = this.buffer.toLowerCase();
-        const endIdx = lowerBuffer.indexOf(TOOL_END);
+       } else {
+         const endIdx = this.buffer.indexOf(TOOL_END);
         if (endIdx !== -1) {
           const content = this.buffer.substring(0, endIdx);
           this.buffer = this.buffer.substring(endIdx + TOOL_END.length);

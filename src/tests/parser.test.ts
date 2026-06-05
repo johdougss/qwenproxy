@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { StreamingToolParser } from '../tools/parser.ts';
+import { StreamingToolParser } from '../tools/parser.js';
 
 test('StreamingToolParser: basic tool call', () => {
   const parser = new StreamingToolParser();

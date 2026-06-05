@@ -1,4 +1,4 @@
-import { QwenAccount, loadAccounts } from './accounts.ts'
+import { QwenAccount, loadAccounts } from './accounts.js'
 import { config } from './config.js'
 
 let currentIndex = 0

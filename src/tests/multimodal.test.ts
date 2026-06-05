@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import net from 'node:net';
 import { serve } from '@hono/node-server';
 import { app } from '../api/server.js';
-import { initPlaywright, closePlaywright } from '../services/playwright.ts';
+import { initPlaywright, closePlaywright } from '../services/playwright.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

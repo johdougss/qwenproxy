@@ -1,4 +1,4 @@
-import { getQwenHeaders, getBasicHeaders } from './playwright.ts';
+import { getQwenHeaders, getBasicHeaders } from './playwright.js';
 import crypto from 'crypto';
 
 const CACHED_TIMEZONE = new Date().toString().split(' (')[0];
@@ -28,8 +28,7 @@ interface SessionEntry {
   timestamp: number;
 }
 
-const sessionStates: Map<string, SessionEntry> = (globalThis as any)._sessionStates || new Map();
-(globalThis as any)._sessionStates = sessionStates;
+const sessionStates: Map<string, SessionEntry> = new Map();
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 function cleanupStaleSessions() {
@@ -65,11 +64,9 @@ interface WarmPoolEntry {
   timestamp: number;
 }
 
-const warmPool: Map<string, WarmPoolEntry[]> = (globalThis as any)._warmPool || new Map();
-(globalThis as any)._warmPool = warmPool;
+const warmPool: Map<string, WarmPoolEntry[]> = new Map();
 
-const refillPromises: Map<string, Promise<void>> = (globalThis as any)._refillPromises || new Map();
-(globalThis as any)._refillPromises = refillPromises;
+const refillPromises: Map<string, Promise<void>> = new Map();
 
 const WARM_POOL_SIZE = 5;
 const WARM_POOL_TTL_MS = 10 * 60 * 1000;
@@ -78,9 +75,8 @@ function cleanupStalePool(accountId: string) {
   const pool = warmPool.get(accountId);
   if (!pool) return;
   const now = Date.now();
-  for (let i = pool.length - 1; i >= 0; i--) {
-    if (now - pool[i].timestamp > WARM_POOL_TTL_MS) pool.splice(i, 1);
-  }
+  const filtered = pool.filter(e => now - e.timestamp <= WARM_POOL_TTL_MS);
+  if (filtered.length !== pool.length) warmPool.set(accountId, filtered);
 }
 
 async function getBasicQwenHeaders(accountId?: string): Promise<Record<string, string>> {
@@ -93,8 +89,6 @@ async function getBasicQwenHeaders(accountId?: string): Promise<Record<string, s
 }
 
 async function createRealQwenChat(header: Record<string, string>): Promise<string> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000);
   const response = await fetch('https://chat.qwen.ai/api/v2/chats/new', {
     method: 'POST',
     headers: {
@@ -116,9 +110,8 @@ async function createRealQwenChat(header: Record<string, string>): Promise<strin
       timestamp: Date.now(),
       project_id: '',
     }),
-    signal: controller.signal,
+    signal: AbortSignal.timeout(30000),
   });
-  clearTimeout(timeoutId);
 
   if (!response.ok) throw new Error(`Failed to create chat: ${response.status}`);
   const json = await response.json();

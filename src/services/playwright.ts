@@ -11,10 +11,26 @@
 import { chromium, firefox, webkit, BrowserContext, Page } from 'playwright';
 import path from 'path';
 import crypto from 'crypto';
-import { QwenAccount } from '../core/accounts.ts';
-import { config } from '../core/config.ts';
+import { QwenAccount } from '../core/accounts.js';
+import { config } from '../core/config.js';
 
 export type BrowserType = 'chromium' | 'firefox' | 'webkit' | 'chrome' | 'edge';
+
+interface BrowserEngineConfig {
+  engine: typeof chromium | typeof firefox | typeof webkit;
+  channel?: string;
+}
+
+function resolveBrowserEngine(browserType: BrowserType): BrowserEngineConfig {
+  switch (browserType) {
+    case 'firefox': return { engine: firefox };
+    case 'webkit': return { engine: webkit };
+    case 'chrome': return { engine: chromium, channel: 'chrome' };
+    case 'edge': return { engine: chromium, channel: 'msedge' };
+    case 'chromium':
+    default: return { engine: chromium };
+  }
+}
 
 let context: BrowserContext | null = null;
 export let activePage: Page | null = null;
@@ -120,9 +136,14 @@ export async function getBasicHeaders(accountId?: string): Promise<{ cookie: str
   if (!page) throw new Error('Playwright not initialized');
   
   const cookie = await getCookies(accountId);
-  const userAgent = await page.evaluate(() => navigator.userAgent);
-  
   const cacheKey = accountId || 'global';
+  
+  let userAgent = cachedUserAgents.get(cacheKey);
+  if (!userAgent) {
+    userAgent = await page.evaluate(() => navigator.userAgent);
+    cachedUserAgents.set(cacheKey, userAgent);
+  }
+  
   const cache = getAccountHeaderCache(cacheKey);
   const bxV = cache.currentHeaders['bx-v'] || '2.5.36';
   const bxUa = cache.currentHeaders['bx-ua'];
@@ -138,34 +159,11 @@ export async function initPlaywright(headless = true, browserType: BrowserType =
   }
 
   const profilePath = path.resolve('qwen_profiles', '_default');
-  
-  let browserEngine;
-  let channel: string | undefined;
-
-  switch (browserType) {
-    case 'firefox':
-      browserEngine = firefox;
-      break;
-    case 'webkit':
-      browserEngine = webkit;
-      break;
-    case 'chrome':
-      browserEngine = chromium;
-      channel = 'chrome';
-      break;
-    case 'edge':
-      browserEngine = chromium;
-      channel = 'msedge';
-      break;
-    case 'chromium':
-    default:
-      browserEngine = chromium;
-      break;
-  }
+  const { engine, channel } = resolveBrowserEngine(browserType);
 
   console.log(`[Playwright] Launching ${browserType}...`);
 
-  context = await browserEngine.launchPersistentContext(profilePath, {
+  context = await engine.launchPersistentContext(profilePath, {
     headless,
     channel,
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
@@ -249,45 +247,8 @@ export async function closePlaywright() {
 
 export async function loginToQwen(email: string, password: string): Promise<boolean> {
   if (!activePage) throw new Error('Playwright not initialized');
-
   console.log(`[Playwright] Attempting API login for ${email}...`);
-  
-  await activePage.goto('https://chat.qwen.ai/auth', { waitUntil: 'domcontentloaded' });
-
-  const hashedPassword = crypto.createHash('sha256').update(password).digest('hex');
-
-  const result = await activePage.evaluate(async ({ email, password }) => {
-    try {
-      const response = await fetch("https://chat.qwen.ai/api/v2/auths/signin", {
-        method: "POST",
-        headers: {
-          "accept": "application/json, text/plain, */*",
-          "content-type": "application/json",
-          "source": "web",
-          "timezone": new Date().toString().split(' (')[0],
-          "x-request-id": crypto.randomUUID()
-        },
-        body: JSON.stringify({ email, password, login_type: "email" })
-      });
-      const data = await response.json();
-      return { ok: response.ok, data };
-    } catch (e: any) {
-      return { ok: false, error: e.message };
-    }
-  }, { email, password: hashedPassword });
-
-  if (result.ok) {
-    console.log('[Playwright] API login request successful.');
-    await activePage.goto('https://chat.qwen.ai/', { waitUntil: 'domcontentloaded' });
-    const isLogged = !(activePage.url().includes('auth') || activePage.url().includes('login'));
-    if (isLogged) {
-       console.log('[Playwright] Login confirmed.');
-       return true;
-    }
-  }
-
-  console.error('[Playwright] Login failed:', result.data || result.error);
-  return false;
+  return loginToQwenWithContext(activePage.context(), activePage, email, password);
 }
 
 async function loginToQwenUI(email: string, password: string): Promise<boolean> {
@@ -374,7 +335,11 @@ async function tryLightweightCookieRefresh(accountId?: string): Promise<{ header
   try {
     const cookies = await page.context().cookies();
     const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
-    const userAgent = await page.evaluate(() => navigator.userAgent);
+    let userAgent = cachedUserAgents.get(cacheKey);
+    if (!userAgent) {
+      userAgent = await page.evaluate(() => navigator.userAgent);
+      cachedUserAgents.set(cacheKey, userAgent);
+    }
 
     const now = Date.now();
     cookieCaches.set(cacheKey, { cookie: cookieStr, timestamp: now });
@@ -473,7 +438,7 @@ async function _getQwenHeadersInternal(forceNew = false, accountId?: string): Pr
         console.warn('[Playwright] Detected login page but QWEN_EMAIL/PASSWORD not provided in .env');
       }
     } else {
-      const { getAccountCredentials } = await import('../core/accounts.ts');
+      const { getAccountCredentials } = await import('../core/accounts.js');
       const creds = getAccountCredentials(accountId);
       if (creds && creds.email && creds.password) {
         console.log(`[Playwright] Detected login page for account ${creds.email}. Attempting login...`);
@@ -548,7 +513,7 @@ async function _getQwenHeadersInternal(forceNew = false, accountId?: string): Pr
       cache.lastHeadersTime = Date.now();
       cache.refreshInProgress = false;
 
-      import('./qwen.ts').then(m => m.disableNativeTools(accountId).catch(() => {}));
+      import('./qwen.js').then(m => m.disableNativeTools(accountId).catch(() => {}));
 
       await route.abort('aborted');
 
@@ -609,34 +574,11 @@ async function _getQwenHeadersInternal(forceNew = false, accountId?: string): Pr
 
 export async function initPlaywrightForAccount(account: QwenAccount, headless = true, browserType: BrowserType = 'chromium') {
   const profilePath = path.resolve('qwen_profiles', account.id);
-  
-  let browserEngine;
-  let channel: string | undefined;
-
-  switch (browserType) {
-    case 'firefox':
-      browserEngine = firefox;
-      break;
-    case 'webkit':
-      browserEngine = webkit;
-      break;
-    case 'chrome':
-      browserEngine = chromium;
-      channel = 'chrome';
-      break;
-    case 'edge':
-      browserEngine = chromium;
-      channel = 'msedge';
-      break;
-    case 'chromium':
-    default:
-      browserEngine = chromium;
-      break;
-  }
+  const { engine, channel } = resolveBrowserEngine(browserType);
 
   console.log(`[Playwright] Launching ${browserType} for account ${account.email}...`);
 
-  const acctContext = await browserEngine.launchPersistentContext(profilePath, {
+  const acctContext = await engine.launchPersistentContext(profilePath, {
     headless,
     channel,
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
@@ -666,32 +608,9 @@ export async function initPlaywrightForAccount(account: QwenAccount, headless = 
 
 export async function launchManualLoginAccount(accountId: string, browserType: BrowserType = 'chromium'): Promise<{ context: BrowserContext, page: Page }> {
   const profilePath = path.resolve('qwen_profiles', accountId);
-  
-  let browserEngine;
-  let channel: string | undefined;
+  const { engine, channel } = resolveBrowserEngine(browserType);
 
-  switch (browserType) {
-    case 'firefox':
-      browserEngine = firefox;
-      break;
-    case 'webkit':
-      browserEngine = webkit;
-      break;
-    case 'chrome':
-      browserEngine = chromium;
-      channel = 'chrome';
-      break;
-    case 'edge':
-      browserEngine = chromium;
-      channel = 'msedge';
-      break;
-    case 'chromium':
-    default:
-      browserEngine = chromium;
-      break;
-  }
-
-  const acctContext = await browserEngine.launchPersistentContext(profilePath, {
+  const acctContext = await engine.launchPersistentContext(profilePath, {
     headless: false,
     channel,
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',

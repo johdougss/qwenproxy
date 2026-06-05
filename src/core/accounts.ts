@@ -1,5 +1,5 @@
 import crypto from 'crypto'
-import { getDatabase } from './database.ts'
+import { getDatabase } from './database.js'
 import { config } from './config.js'
 
 export interface QwenAccount {

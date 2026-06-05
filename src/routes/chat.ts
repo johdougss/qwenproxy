@@ -11,18 +11,17 @@
 import { Context } from 'hono';
 import { stream as honoStream } from 'hono/streaming';
 import crypto from 'crypto';
-import { createQwenStream, updateSessionParent } from '../services/qwen.ts';
-import { OpenAIRequest, ChoiceDelta, Message } from '../utils/types.ts';
-import { registry } from '../tools/registry.ts';
-import type { FunctionToolDefinition } from '../tools/types.ts';
-import { robustParseJSON } from '../utils/json.ts';
-import { StreamingToolParser } from '../tools/parser.ts';
-import { QwenStreamParser, ParsedChunkResult } from '../utils/qwen-stream-parser.ts';
-import { RetryableQwenStreamError } from '../services/qwen.ts';
+import { createQwenStream, updateSessionParent, RetryableQwenStreamError } from '../services/qwen.js';
+import { OpenAIRequest, ChoiceDelta, Message } from '../utils/types.js';
+import { registry } from '../tools/registry.js';
+import type { FunctionToolDefinition } from '../tools/types.js';
+import { robustParseJSON } from '../utils/json.js';
+import { StreamingToolParser } from '../tools/parser.js';
+import { QwenStreamParser, ParsedChunkResult } from '../utils/qwen-stream-parser.js';
 import { getModelContextWindow } from '../core/model-registry.js'
-import { truncateMessages, estimateTokenCount } from '../utils/context-truncation.ts';
-import { getNextAccount, getNextAvailableAccount, markAccountRateLimited, getAccountCooldownInfo } from '../core/account-manager.ts';
-import { registerStream, removeStream, getStream } from '../core/stream-registry.ts';
+import { truncateMessages, estimateTokenCount } from '../utils/context-truncation.js';
+import { getNextAccount, getNextAvailableAccount, markAccountRateLimited, getAccountCooldownInfo } from '../core/account-manager.js';
+import { registerStream, removeStream, getStream } from '../core/stream-registry.js';
 import { metrics } from '../core/metrics.js'
 
 export interface DeltaResult {
@@ -289,7 +288,7 @@ export async function chatCompletions(c: Context) {
 
     // Account selection with fallback on rate-limit/failure
     let account = getNextAccount();
-    let triedAccountIds = new Set<string>();
+    const triedAccountIds = new Set<string>();
     let lastError: any = null;
 
     let stream: ReadableStream | undefined;
@@ -395,7 +394,6 @@ export async function chatCompletions(c: Context) {
 
       const toolCallsOut: any[] = [];
       let buffer = '';
-      const hasTools = Array.isArray(bodyAny.tools) && bodyAny.tools.length > 0;
 
       const qwenParser = new QwenStreamParser(uiSessionId, {
         tools: hasTools ? bodyAny.tools : [],
@@ -524,25 +522,13 @@ export async function chatCompletions(c: Context) {
         const createdTimestamp = Math.floor(Date.now() / 1000);
 
         const fastWriteContent = (content: string) => {
-          const chunk = JSON.stringify({
-            id: completionId,
-            object: 'chat.completion.chunk',
-            created: createdTimestamp,
-            model: body.model,
-            choices: [makeChoice({ content })]
-          });
-          streamWriter.write(`data: ${chunk}\n\n`);
+          const escaped = content.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+          streamWriter.write(`data: {"id":"${completionId}","object":"chat.completion.chunk","created":${createdTimestamp},"model":"${body.model}","choices":[{"index":0,"delta":{"content":"${escaped}"},"logprobs":null,"finish_reason":null}]}\n\n`);
         };
 
         const fastWriteReasoning = (content: string) => {
-          const chunk = JSON.stringify({
-            id: completionId,
-            object: 'chat.completion.chunk',
-            created: createdTimestamp,
-            model: body.model,
-            choices: [makeChoice({ reasoning_content: content })]
-          });
-          streamWriter.write(`data: ${chunk}\n\n`);
+          const escaped = content.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+          streamWriter.write(`data: {"id":"${completionId}","object":"chat.completion.chunk","created":${createdTimestamp},"model":"${body.model}","choices":[{"index":0,"delta":{"reasoning_content":"${escaped}"},"logprobs":null,"finish_reason":null}]}\n\n`);
         };
 
         writeEvent({
@@ -563,7 +549,6 @@ export async function chatCompletions(c: Context) {
         let targetResponseId: string | null = null;
         let targetResponseIdSet = false;
         let currentThoughtIndex = 0;
-        const hasTools = Array.isArray(bodyAny.tools) && bodyAny.tools.length > 0;
         const toolParser = hasTools ? new StreamingToolParser(bodyAny.tools) : null;
 
         let buffer = '';

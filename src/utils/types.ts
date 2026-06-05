@@ -8,7 +8,7 @@
  * Modified By: Pedro Farias
  */
 
-import type { JsonSchema, FunctionToolDefinition } from '../tools/types.ts';
+import type { JsonSchema, FunctionToolDefinition } from '../tools/types.js';
 export type { JsonSchema, FunctionToolDefinition };
 
 /** Tool choice options */
