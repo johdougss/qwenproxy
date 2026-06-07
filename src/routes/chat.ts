@@ -52,14 +52,6 @@ export function getIncrementalDelta(oldStr: string, newStr: string, prevLength: 
     const actualSuffix = newStr.slice(prevLength - checkLen, prevLength);
     
     if (expectedSuffix === actualSuffix) {
-      if (delta.length <= 4 && oldStr.length > 2000) {
-        return { 
-          delta: newStr, 
-          matchedContent: oldStr + newStr,
-          contentLength: newStr.length,
-          contentSuffix: newStr.slice(-64)
-        };
-      }
       return { 
         delta, 
         matchedContent: newStr,
@@ -72,14 +64,6 @@ export function getIncrementalDelta(oldStr: string, newStr: string, prevLength: 
   // Fallback: startsWith check for edge cases
   if (newStr.startsWith(oldStr)) {
     const delta = newStr.slice(oldStr.length);
-    if (delta.length <= 4 && oldStr.length > 2000) {
-      return { 
-        delta: newStr, 
-        matchedContent: oldStr + newStr,
-        contentLength: newStr.length,
-        contentSuffix: newStr.slice(-64)
-      };
-    }
     return { 
       delta, 
       matchedContent: newStr,
@@ -263,12 +247,12 @@ export async function chatCompletions(c: Context) {
 
     const modelId = body.model.replace('-no-thinking', '');
     const modelContextWindow = getModelContextWindow(modelId)
-    const estimatedTokens = estimateTokenCount(systemPrompt + prompt);
+    const estimatedTokens = estimateTokenCount(systemPrompt + prompt, modelId);
     const hasTools = Array.isArray(bodyAny.tools) && bodyAny.tools.length > 0;
     
     let finalPrompt: string;
     if (estimatedTokens > modelContextWindow - 1000) {
-      const truncated = truncateMessages(messages, modelContextWindow, systemPrompt);
+      const truncated = truncateMessages(messages, modelContextWindow, systemPrompt, modelId);
       const truncatedBody = truncated.map(m => `${m.role === 'user' ? 'User' : m.role === 'assistant' ? 'Assistant' : m.role}: ${m.content}`).join('\n\n');
       finalPrompt = systemPrompt ? `${systemPrompt}\n\n${truncatedBody}` : truncatedBody;
     } else {
@@ -672,7 +656,9 @@ export async function chatCompletions(c: Context) {
                 }
               }
             } catch (e) {
-              // parse error, ignore partial chunk
+              if (dataStr.length > 10) {
+                console.warn(`[Chat] SSE parse error for chunk (${dataStr.length} chars):`, (e as Error).message);
+              }
             }
           }
 

@@ -2,10 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import { StreamingToolParser } from '../tools/parser.js';
 
+const TC_OPEN = '<tool_' + 'call>';
+const TC_CLOSE = '</tool_' + 'call>';
+
 test('StreamingToolParser: basic tool call', () => {
   const parser = new StreamingToolParser();
-  
-  const result = parser.feed('Hello! <tool_call>{"name": "t1", "arguments": {"a": 1}}</tool_call>');
+  const result = parser.feed(`Hello! ${TC_OPEN}{"name": "t1", "arguments": {"a": 1}}${TC_CLOSE}`);
   assert.strictEqual(result.text, 'Hello! ');
   assert.strictEqual(result.toolCalls.length, 1);
   assert.strictEqual(result.toolCalls[0].name, 't1');
@@ -13,8 +15,7 @@ test('StreamingToolParser: basic tool call', () => {
 
 test('StreamingToolParser: multiple tool calls', () => {
   const parser = new StreamingToolParser();
-  
-  const result = parser.feed('<tool_call>{"name": "t2", "arguments": {}}</tool_call><tool_call>{"name": "t3", "arguments": {}}</tool_call>');
+  const result = parser.feed(`${TC_OPEN}{"name": "t2", "arguments": {}}${TC_CLOSE}${TC_OPEN}{"name": "t3", "arguments": {}}${TC_CLOSE}`);
   assert.strictEqual(result.text, '');
   assert.strictEqual(result.toolCalls.length, 2);
   assert.strictEqual(result.toolCalls[0].name, 't2');
@@ -23,11 +24,9 @@ test('StreamingToolParser: multiple tool calls', () => {
 
 test('StreamingToolParser: fragmented tool call', () => {
   const parser = new StreamingToolParser();
-  
   assert.strictEqual(parser.feed('Text <tool_').text, 'Text ');
   assert.strictEqual(parser.feed('call>{"name": ').text, '');
-  const final = parser.feed('"frag", "arguments": {}}</tool_call> trailing');
-  
+  const final = parser.feed(`"frag", "arguments": {}}${TC_CLOSE} trailing`);
   assert.strictEqual(final.toolCalls.length, 1);
   assert.strictEqual(final.toolCalls[0].name, 'frag');
   assert.strictEqual(final.text, ' trailing');
@@ -35,26 +34,24 @@ test('StreamingToolParser: fragmented tool call', () => {
 
 test('StreamingToolParser: flush partial content', () => {
   const parser = new StreamingToolParser();
-  
   parser.feed('Unfinished tag <tool_');
   assert.strictEqual(parser.flush().text, '<tool_');
 
   const parser2 = new StreamingToolParser();
-  parser2.feed('Broken tool <tool_call>{"name": "healable"');
+  parser2.feed(`${TC_OPEN}{"name": "healable"`);
   const flushed = parser2.flush();
   assert.strictEqual(flushed.toolCalls.length, 1);
   assert.strictEqual(flushed.toolCalls[0].name, 'healable');
-  
+
   const parser3 = new StreamingToolParser();
-  parser3.feed('Invalid <tool_call>NOT_JSON');
+  parser3.feed(`Invalid ${TC_OPEN}NOT_JSON`);
   const flushed2 = parser3.flush();
-  assert.strictEqual(flushed2.text, '<tool_call>NOT_JSON</tool_call>');
+  assert.strictEqual(flushed2.text, `${TC_OPEN}NOT_JSON${TC_CLOSE}`);
 });
 
 test('StreamingToolParser: robust parsing of malformed JSON', () => {
   const parser = new StreamingToolParser();
-  
-  const res = parser.feed('<tool_call>{"name": "broken", "arguments": {"a": 1}</tool_call>');
+  const res = parser.feed(`${TC_OPEN}{"name": "broken", "arguments": {"a": 1}${TC_CLOSE}`);
   assert.strictEqual(res.toolCalls.length, 1);
   assert.strictEqual(res.toolCalls[0].name, 'broken');
   assert.deepStrictEqual(res.toolCalls[0].arguments, { a: 1 });
@@ -62,25 +59,22 @@ test('StreamingToolParser: robust parsing of malformed JSON', () => {
 
 test('StreamingToolParser: preserves tags in non-tool text', () => {
   const parser = new StreamingToolParser();
-  
-  const res1 = parser.feed('Fake: <tool_call> { "only_args": 1 } </tool_call> ');
-  assert.ok(res1.text.includes('<tool_call>'), 'Should contain start tag');
-  assert.ok(res1.text.includes('</tool_call>'), 'Should contain end tag');
+  const res1 = parser.feed(`Fake: ${TC_OPEN} { "only_args": 1 } ${TC_CLOSE} `);
+  assert.ok(res1.text.includes(TC_OPEN), 'Should contain start tag');
+  assert.ok(res1.text.includes(TC_CLOSE), 'Should contain close tag');
   assert.strictEqual(res1.toolCalls.length, 0);
 
-  const res2 = parser.feed('Real: <tool_call>{"name":"r"}</tool_call>');
+  const res2 = parser.feed(`Real: ${TC_OPEN}{"name":"r"}${TC_CLOSE}`);
   assert.strictEqual(res2.toolCalls.length, 1);
   assert.strictEqual(res2.toolCalls[0].name, 'r');
 });
 
 test('StreamingToolParser: handles multiple tool calls in array format', () => {
   const parser = new StreamingToolParser();
-  
-  const chunk = `<tool_call>[
+  const chunk = `${TC_OPEN}[
   {"name": "bash", "arguments": {"command": "ls", "description": "List files"}},
   {"name": "read", "arguments": {"path": "test.txt"}}
-]</tool_call>`;
-  
+]${TC_CLOSE}`;
   const result = parser.feed(chunk);
   assert.strictEqual(result.toolCalls.length, 2, 'Should extract both tool calls');
   assert.strictEqual(result.toolCalls[0].name, 'bash');
@@ -90,8 +84,7 @@ test('StreamingToolParser: handles multiple tool calls in array format', () => {
 
 test('StreamingToolParser: double-escaped quotes in JSON', () => {
   const parser = new StreamingToolParser();
-  
-  const input = '<tool_call>{\\"name\\": \\"edit\\", \\"arguments\\": {\\"filePath\\": \\"/tmp/test.txt\\", \\"content\\": \\"hello\\"}}</tool_call>';
+  const input = `${TC_OPEN}{\\"name\\": \\"edit\\", \\"arguments\\": {\\"filePath\\": \\"/tmp/test.txt\\", \\"content\\": \\"hello\\"}}${TC_CLOSE}`;
   const res = parser.feed(input);
   assert.strictEqual(res.toolCalls.length, 1);
   assert.strictEqual(res.toolCalls[0].name, 'edit');
@@ -100,8 +93,7 @@ test('StreamingToolParser: double-escaped quotes in JSON', () => {
 
 test('StreamingToolParser: double-escaped quotes in XML parameters', () => {
   const parser = new StreamingToolParser();
-  
-  const input = '<tool_call>\n<name>write</name>\n<parameter name=\\"content\\">&lt;div&gt;hello &amp; world&lt;/div&gt;</parameter>\n</tool_call>';
+  const input = `${TC_OPEN}\n<name>write</name>\n<parameter name=\\"content\\">&lt;div&gt;hello &amp; world&lt;/div&gt;</parameter>\n${TC_CLOSE}`;
   const res = parser.feed(input);
   assert.strictEqual(res.toolCalls.length, 1);
   assert.strictEqual(res.toolCalls[0].name, 'write');
@@ -110,8 +102,7 @@ test('StreamingToolParser: double-escaped quotes in XML parameters', () => {
 
 test('StreamingToolParser: truncated JSON with unclosed string', () => {
   const parser = new StreamingToolParser();
-  
-  const res = parser.feed('<tool_call>{"name": "bash", "arguments": {"command": "echo hello</tool_call>');
+  const res = parser.feed(`${TC_OPEN}{"name": "bash", "arguments": {"command": "echo hello${TC_CLOSE}`);
   assert.strictEqual(res.toolCalls.length, 1);
   assert.strictEqual(res.toolCalls[0].name, 'bash');
   assert.strictEqual(typeof res.toolCalls[0].arguments.command, 'string');
@@ -119,9 +110,60 @@ test('StreamingToolParser: truncated JSON with unclosed string', () => {
 
 test('StreamingToolParser: flush double-escaped tool call', () => {
   const parser = new StreamingToolParser();
-  
-  parser.feed('<tool_call>{\\"name\\": \\"recover\\",\\"arguments\\": {\\"a\\": \\"val');
+  parser.feed(`${TC_OPEN}{\\"name\\": \\"recover\\",\\"arguments\\": {\\"a\\": \\"val`);
   const flushed = parser.flush();
   assert.strictEqual(flushed.toolCalls.length, 1);
   assert.strictEqual(flushed.toolCalls[0].name, 'recover');
+});
+
+test('StreamingToolParser: handles literal close tag inside JSON string', () => {
+  const parser = new StreamingToolParser();
+  const toolCallJson = JSON.stringify({
+    name: "edit",
+    arguments: {
+      filePath: "/tmp/test.ts",
+      oldString: `some code with ${TC_CLOSE} inside a string value`,
+      newString: "replacement code"
+    }
+  });
+  const fullInput = `${TC_OPEN}${toolCallJson}${TC_CLOSE}`;
+  const res = parser.feed(fullInput);
+  assert.strictEqual(res.toolCalls.length, 1, 'Should parse the tool call despite to literal close tag in string');
+  assert.strictEqual(res.toolCalls[0].name, 'edit');
+  assert.strictEqual(res.toolCalls[0].arguments.filePath, '/tmp/test.ts');
+  assert.ok(
+    (res.toolCalls[0].arguments.oldString as string).includes(TC_CLOSE),
+    'oldString should contain the literal close tag'
+  );
+});
+
+test('StreamingToolParser: unquoted arguments key with nested string values containing colons', () => {
+  const parser = new StreamingToolParser();
+  const input = `${TC_OPEN}{"name":"todowrite",arguments:{"todos":[{"content":"Add versions/activeVersionIndex to DB schema with migration","status":"completed","priority":"high"},{"content":"Update dbService to handle versions","status":"completed","priority":"high"},{"content":"Update ChatStore types and add regenerateMessage + switchVersion methods","status":"in_progress","priority":"high"},{"content":"Update Chat.tsx handleRegenerate to use new regenerateMessage","status":"pending"}]}}${TC_CLOSE}`;
+  const res = parser.feed(input);
+  assert.strictEqual(res.toolCalls.length, 1);
+  assert.strictEqual(res.toolCalls[0].name, 'todowrite');
+  assert.strictEqual((res.toolCalls[0].arguments.todos as any[]).length, 4);
+  assert.strictEqual((res.toolCalls[0].arguments.todos as any[])[2].status, 'in_progress');
+});
+
+test('StreamingToolParser: handles literal close tag in streamed chunks', () => {
+  const parser = new StreamingToolParser();
+  const toolCallJson = JSON.stringify({
+    name: "edit",
+    arguments: {
+      filePath: "/tmp/app.ts",
+      oldString: `function foo() { return "${TC_CLOSE}"; }`,
+      newString: "function bar() {}"
+    }
+  });
+  const fullInput = `${TC_OPEN}${toolCallJson}${TC_CLOSE}`;
+  const mid = Math.floor(fullInput.length / 2);
+  const chunk1 = fullInput.substring(0, mid);
+  const chunk2 = fullInput.substring(mid);
+
+  parser.feed(chunk1);
+  const res = parser.feed(chunk2);
+  assert.strictEqual(res.toolCalls.length, 1, 'Should parse across chunk boundaries');
+  assert.strictEqual(res.toolCalls[0].name, 'edit');
 });

@@ -4,6 +4,7 @@ import { getBasicHeaders } from '../services/playwright.js'
 import { loadAccounts } from '../core/accounts.js'
 import { getAccountCooldownInfo } from '../core/account-manager.js'
 import { cache } from '../cache/memory-cache.js'
+import { syncModelContextWindows } from '../core/model-registry.js'
 
 const app = new Hono()
 
@@ -80,7 +81,7 @@ app.get('/v1/models', async (c) => {
       ],
     }
 
-    // Cache the formatted models list for 5 minutes (300 seconds)
+    syncModelContextWindows(formatted.data)
     await cache.set(cacheKey, formatted, 300)
     
     return c.json(formatted)
@@ -163,6 +164,7 @@ app.get('/v1/models/:model', async (c) => {
         ],
       }
 
+      syncModelContextWindows(formatted.data)
       await cache.set(cacheKey, formatted, 300)
       models = formatted.data
     }

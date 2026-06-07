@@ -1,8 +1,8 @@
-export function estimateTokenCount(text: string): number {
-  // Divisor conservador (2.5) para evitar estouro silencioso do context window.
-  // Tokenizers modernos (como o do Qwen) usam ~1.5 a 2.5 caracteres por token
-  // para textos mistos (português, código, caracteres especiais).
-  return Math.ceil(text.length / 2.5);
+import { getModelTokenDivisor } from '../core/model-registry.js'
+
+export function estimateTokenCount(text: string, modelId?: string): number {
+  const divisor = modelId ? getModelTokenDivisor(modelId) : 2.0
+  return Math.ceil(text.length / divisor)
 }
 
 function truncateSemantically(content: string, maxChars: number): string {
@@ -33,9 +33,11 @@ function truncateSemantically(content: string, maxChars: number): string {
 export function truncateMessages(
   messages: Array<{ role: string; content: string | null | any[] | Record<string, unknown> }>,
   maxContextLength: number,
-  systemPrompt: string = ''
+  systemPrompt: string = '',
+  modelId?: string
 ): Array<{ role: string; content: string }> {
-  const systemTokens = estimateTokenCount(systemPrompt);
+  const divisor = modelId ? getModelTokenDivisor(modelId) : 2.0
+  const systemTokens = estimateTokenCount(systemPrompt, modelId);
   const availableTokens = maxContextLength - systemTokens - 500;
   
   if (availableTokens <= 0) {
@@ -59,7 +61,7 @@ export function truncateMessages(
   
   for (let i = normalizedMessages.length - 1; i >= 0; i--) {
     const msg = normalizedMessages[i];
-    const msgTokens = estimateTokenCount(msg.content);
+    const msgTokens = estimateTokenCount(msg.content, modelId);
     
     if (usedTokens + msgTokens <= availableTokens) {
       result.push(msg);
@@ -67,7 +69,7 @@ export function truncateMessages(
     } else {
       const remainingTokens = availableTokens - usedTokens;
       if (remainingTokens > 100) {
-        const maxChars = Math.floor(remainingTokens * 2.5);
+        const maxChars = Math.floor(remainingTokens * divisor);
         const truncatedContent = truncateSemantically(msg.content, maxChars);
         result.push({ role: msg.role, content: `[Truncated] ${truncatedContent}` });
       }
@@ -77,7 +79,7 @@ export function truncateMessages(
   
   if (result.length === 0 && normalizedMessages.length > 0) {
     const lastMsg = normalizedMessages[normalizedMessages.length - 1];
-    const maxChars = Math.max(200, Math.floor(availableTokens * 2.5));
+    const maxChars = Math.max(200, Math.floor(availableTokens * divisor));
     const truncatedContent = truncateSemantically(lastMsg.content, maxChars);
     result.push({ role: lastMsg.role, content: `[Truncated] ${truncatedContent}` });
   }

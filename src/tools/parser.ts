@@ -184,6 +184,8 @@ function findToolEndIndex(buffer: string): number {
   return -1;
 }
 
+
+
 // ─── Partial Tag Detection ─────────────────────────────────────────────────────
 
 const TOOL_START_LITERAL = '<tool_call>';
@@ -283,8 +285,9 @@ export class StreamingToolParser {
           break;
         }
        } else {
-         const endIdx = this.buffer.indexOf(TOOL_END);
-        if (endIdx !== -1) {
+        let endIdx = findToolEndIndex(this.buffer);
+         if (endIdx === -1) endIdx = this.buffer.indexOf(TOOL_END);
+         if (endIdx !== -1) {
           const content = this.buffer.substring(0, endIdx);
           this.buffer = this.buffer.substring(endIdx + TOOL_END.length);
           this.processToolContent(content, result);
@@ -292,7 +295,7 @@ export class StreamingToolParser {
           this.currentOpenTag = TOOL_START_LITERAL;
           if (this.buffer.length > 0) {
             const nextMatch = this.buffer.match(TOOL_OPEN_RE);
-              if (nextMatch && nextMatch.index !== undefined) {
+            if (nextMatch && nextMatch.index !== undefined) {
               result.text += this.buffer.substring(0, nextMatch.index);
               this.insideTool = true;
               this.currentOpenTag = nextMatch[0];
@@ -305,7 +308,7 @@ export class StreamingToolParser {
             }
           }
         } else {
-          break; // Wait for more data
+          break;
         }
       }
     }

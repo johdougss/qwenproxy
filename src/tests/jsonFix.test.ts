@@ -108,3 +108,20 @@ test('robustParseJSON: handles boolean and null values', () => {
   assert.strictEqual(result.deleted, false);
   assert.strictEqual(result.data, null);
 });
+
+test('robustParseJSON: handles unquoted string value after colon', () => {
+  const result = robustParseJSON('{"name": "bash", "arguments": {"command":export CI=true GIT_PAGER=cat npm run build, "description": "Build"}}');
+  assert.ok(result);
+  assert.strictEqual(result.name, 'bash');
+  assert.ok(typeof result.arguments.command === 'string');
+  assert.ok(result.arguments.command.includes('export CI=true'));
+  assert.strictEqual(result.arguments.description, 'Build');
+});
+
+test('robustParseJSON: handles unquoted string value with special chars', () => {
+  const result = robustParseJSON('{"name": "bash", "arguments": {"command":git add -A && git commit -m "fix"}}');
+  assert.ok(result);
+  assert.strictEqual(result.name, 'bash');
+  assert.ok(typeof result.arguments.command === 'string');
+  assert.ok(result.arguments.command.includes('git add'));
+});

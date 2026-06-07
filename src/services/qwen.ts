@@ -1,7 +1,10 @@
 import { getQwenHeaders, getBasicHeaders } from './playwright.js';
+import { MAX_PAYLOAD_SIZE } from '../core/model-registry.js';
 import crypto from 'crypto';
 
 const CACHED_TIMEZONE = new Date().toString().split(' (')[0];
+const BASE_TIMEOUT_MS = 120000;
+const TIMEOUT_PER_MB = 30000;
 
 export class RetryableQwenStreamError extends Error {
   readonly retryAfterMs: number;
@@ -162,7 +165,15 @@ export async function getWarmedChat(accountId?: string) {
     }
     await refillPromises.get(key);
   }
-  if (pool.length === 0) throw new Error(`Warm pool empty for ${key}`);
+  if (pool.length === 0) {
+    // Retry once with short backoff if pool is still empty after first refill attempt
+    await new Promise(r => setTimeout(r, 1000));
+    if (!refillPromises.has(key)) {
+      refillPromises.set(key, refillPoolForAccount(key).finally(() => refillPromises.delete(key)));
+    }
+    await refillPromises.get(key);
+  }
+  if (pool.length === 0) throw new Error(`Warm pool empty after retry for ${key}`);
   return pool.shift()!;
 }
 
@@ -395,6 +406,7 @@ export async function createQwenStream(
       }
     } catch (err: any) {
       console.error('[Qwen] Failed to process multimodal uploads:', err.message);
+      throw new Error(`Multimodal upload failed: ${err.message}`);
     }
   }
 
@@ -443,9 +455,17 @@ export async function createQwenStream(
     timestamp: timestamp + 1
   };
 
+  const payloadJson = JSON.stringify(payload);
+  const payloadSize = Buffer.byteLength(payloadJson);
+  if (payloadSize > MAX_PAYLOAD_SIZE) {
+    throw new Error(`Payload too large: ${payloadSize} bytes exceeds limit of ${MAX_PAYLOAD_SIZE} bytes`);
+  }
+  const payloadMB = payloadSize / (1024 * 1024);
+  const timeoutMs = BASE_TIMEOUT_MS + Math.ceil(payloadMB * TIMEOUT_PER_MB);
+
   const url = `https://chat.qwen.ai/api/v2/chat/completions?chat_id=${chatId}`;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 120000);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -464,7 +484,7 @@ export async function createQwenStream(
       'x-request-id': crypto.randomUUID(),
       'bx-v': chatHeaders['bx-v'],
     },
-    body: JSON.stringify(payload),
+    body: payloadJson,
     signal: controller.signal
   });
   clearTimeout(timeoutId);

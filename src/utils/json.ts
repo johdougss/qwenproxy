@@ -59,6 +59,124 @@ function closeBraces(input: string, openBraces: number, openBrackets: number, in
   return out;
 }
 
+function quoteUnquotedStringValues(input: string): string {
+  let out = '';
+  let i = 0;
+  let inString = false;
+  let escaped = false;
+
+  while (i < input.length) {
+    const ch = input[i];
+
+    if (escaped) { out += ch; escaped = false; i++; continue; }
+    if (ch === '\\' && inString) { out += ch; escaped = true; i++; continue; }
+    if (ch === '"') { inString = !inString; out += ch; i++; continue; }
+    if (inString) { out += ch; i++; continue; }
+
+    if (ch === ':') {
+      out += ch;
+      i++;
+      let ws = '';
+      while (i < input.length && /\s/.test(input[i])) { ws += input[i]; i++; }
+      out += ws;
+      if (i >= input.length) break;
+
+      const next = input[i];
+      if (next === '"' || next === '{' || next === '[' || next === '-' || /[0-9]/.test(next)) {
+        continue;
+      }
+      const rest = input.substring(i);
+      if (/^(true|false|null)\b/.test(rest)) {
+        continue;
+      }
+
+      let val = '';
+      let depthBrace = 0;
+      let depthBracket = 0;
+      let j = i;
+      while (j < input.length) {
+        const c = input[j];
+        if (c === '{') depthBrace++;
+        else if (c === '}') {
+          if (depthBrace === 0) break;
+          depthBrace--;
+        } else if (c === '[') depthBracket++;
+        else if (c === ']') {
+          if (depthBracket === 0) break;
+          depthBracket--;
+        } else if (c === ',' && depthBrace === 0 && depthBracket === 0) {
+          break;
+        }
+        val += c;
+        j++;
+      }
+
+      if (val.length > 0) {
+        const escapedVal = val.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+        out += '"' + escapedVal + '"';
+      }
+      i = j;
+      continue;
+    }
+
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
+function quoteUnquotedKeys(input: string): string {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+
+    if (escaped) {
+      out += ch;
+      escaped = false;
+      continue;
+    }
+
+    if (ch === '\\') {
+      out += ch;
+      escaped = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = !inString;
+      out += ch;
+      continue;
+    }
+
+    if (inString) {
+      out += ch;
+      continue;
+    }
+
+    if (/[a-zA-Z_]/.test(ch)) {
+      let j = i;
+      while (j < input.length && /[a-zA-Z0-9_]/.test(input[j])) j++;
+      const ident = input.slice(i, j);
+      let k = j;
+      while (k < input.length && /\s/.test(input[k])) k++;
+      if (k < input.length && input[k] === ':') {
+        out += '"' + ident + '"';
+      } else {
+        out += ident;
+      }
+      i = j - 1;
+      continue;
+    }
+
+    out += ch;
+  }
+
+  return out;
+}
+
 export function robustParseJSON(str: string): any {
   let sanitized = str.trim();
   sanitized = sanitized.replace(/^```json\s*/, '').replace(/```$/, '').trim();
@@ -69,7 +187,8 @@ export function robustParseJSON(str: string): any {
   let jsonPart = sanitized.substring(firstBrace);
   try { return JSON.parse(jsonPart); } catch (e) { /* continue */ }
 
-  let currentJson = jsonPart.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)(\s*:)/g, '$1"$2"$3');
+  let currentJson = quoteUnquotedKeys(jsonPart);
+  currentJson = quoteUnquotedStringValues(currentJson);
   currentJson = currentJson.replace(/([{,]\s*)"([a-zA-Z0-9_]+)"\s*:\s*"\2"\s*:/g, '$1"$2":');
   currentJson = currentJson.replace(/([{,]\s*)([a-zA-Z0-9_]+)\s*:\s*\2\s*:/g, '$1$2:');
 
@@ -106,7 +225,7 @@ export function robustParseJSON(str: string): any {
 
   try { return JSON.parse(tempJson); } catch (e) {
     let aggressive = fixedJson.trim();
-    if (aggressive.endsWith(',')) aggressive = aggressive.slice(0, -1);
+    aggressive = aggressive.replace(/,\s*([}\]])/g, '$1');
     const { result: aggFixed, openBraces: ob, openBrackets: bk, inString: aggInString } = sanitizeAndBalance(aggressive);
   try { return JSON.parse(closeBraces(aggFixed, ob, bk, aggInString)); } catch {
     return null;

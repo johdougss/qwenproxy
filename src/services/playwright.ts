@@ -302,7 +302,9 @@ export async function getQwenHeaders(forceNew = false, accountId?: string): Prom
     if (age < HEADERS_TTL) {
       if (age > HEADERS_TTL * REFRESH_THRESHOLD && !cache.refreshInProgress) {
         cache.refreshInProgress = true;
-        getQwenHeaders(true, accountId).finally(() => {
+        getQwenHeaders(true, accountId).catch((err) => {
+          console.warn(`[Playwright] Background header refresh failed for ${cacheKey}:`, (err as Error).message);
+        }).finally(() => {
           cache.refreshInProgress = false;
         });
       }
