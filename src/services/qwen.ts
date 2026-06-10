@@ -1,6 +1,7 @@
 import { getQwenHeaders, getBasicHeaders } from './playwright.js';
 import { MAX_PAYLOAD_SIZE } from '../core/model-registry.js';
 import crypto from 'crypto';
+import { gzipSync } from 'zlib';
 
 const CACHED_TIMEZONE = new Date().toString().split(' (')[0];
 const BASE_TIMEOUT_MS = 120000;
@@ -484,6 +485,8 @@ export async function createQwenStream(
   const payloadMB = payloadSize / (1024 * 1024);
   const timeoutMs = BASE_TIMEOUT_MS + Math.ceil(payloadMB * TIMEOUT_PER_MB);
 
+  const compressedBody = gzipSync(Buffer.from(payloadJson));
+
   const url = `https://chat.qwen.ai/api/v2/chat/completions?chat_id=${chatId}`;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -493,6 +496,7 @@ export async function createQwenStream(
       'accept': 'application/json',
       'accept-language': 'pt-BR,pt;q=0.9',
       'content-type': 'application/json',
+      'content-encoding': 'gzip',
       'cookie': chatHeaders['cookie'],
       'origin': 'https://chat.qwen.ai',
       'referer': `https://chat.qwen.ai/c/${chatId}`,
@@ -508,7 +512,7 @@ export async function createQwenStream(
       'bx-umidtoken': chatHeaders['bx-umidtoken'] || '',
       ...getClientHintsHeaders(),
     },
-    body: payloadJson,
+    body: compressedBody,
     signal: controller.signal
   });
   clearTimeout(timeoutId);
@@ -529,6 +533,7 @@ export async function createQwenStream(
             'accept': 'application/json',
             'accept-language': 'pt-BR,pt;q=0.9',
             'content-type': 'application/json',
+            'content-encoding': 'gzip',
             'cookie': freshHeaders['cookie'],
             'origin': 'https://chat.qwen.ai',
             'referer': `https://chat.qwen.ai/c/${chatId}`,
@@ -544,7 +549,7 @@ export async function createQwenStream(
             'bx-umidtoken': freshHeaders['bx-umidtoken'] || '',
             ...getClientHintsHeaders(),
           },
-          body: payloadJson,
+          body: compressedBody,
           signal: retryController.signal
         });
         clearTimeout(retryTimeoutId);
