@@ -562,22 +562,20 @@ export async function getGuestHeaders(): Promise<Record<string, string>> {
         await guestPage!.focus(inputSelector);
         await guestPage!.fill(inputSelector, '');
         await guestPage!.type(inputSelector, 'a', { delay: 50 });
-        await sleep(1500);
+        await sleep(1000);
         
-        // Try pressing Enter first as it is highly reliable
-        await guestPage!.focus(inputSelector);
-        await guestPage!.keyboard.press('Enter');
-
         const selectors = ['.message-input-right-button-send .send-button', '.chat-prompt-send-button', 'button.send-button'];
+        let clicked = false;
         for (const selector of selectors) {
-          try {
-            const btn = await guestPage!.$(selector);
-            if (btn && await btn.isVisible()) {
-              await btn.click({ force: true, delay: 50 }).catch(() => {});
-            }
-          } catch (e) {
-            // ignore click errors
+          const btn = await guestPage!.$(selector);
+          if (btn && await btn.isVisible()) {
+            await btn.click({ force: true, delay: 50 }).catch(() => {});
+            clicked = true;
+            break;
           }
+        }
+        if (!clicked) {
+          await guestPage!.keyboard.press('Enter');
         }
       } catch (e) {
         clearTimeout(timeout);
@@ -827,45 +825,47 @@ async function _getQwenHeadersInternal(forceNew = false, accountId?: string): Pr
       console.log(`[Playwright] Triggering request for ${cacheKey}...`);
       const inputSelector = 'textarea:visible, [contenteditable="true"]:visible';
 
-      try {
-        await page.focus(inputSelector);
-        await page.fill(inputSelector, '');
-        await page.type(inputSelector, 'a', { delay: 50 });
-        console.log(`[Playwright] Typed char for ${cacheKey}, waiting for UI to update...`);
-        await sleep(1500);
+      await page.focus(inputSelector);
+      await page.fill(inputSelector, '');
+      await page.type(inputSelector, 'a', { delay: 100 });
+      console.log(`[Playwright] Typed char for ${cacheKey}, waiting for UI to update...`);
+      await sleep(2000);
 
-        // Try pressing Enter first on the input field as it is highly reliable
-        console.log(`[Playwright] Pressing Enter for ${cacheKey}...`);
+      const selectors = [
+        '.message-input-right-button-send .send-button',
+        '.chat-prompt-send-button',
+        'button.send-button'
+      ];
+
+      let clicked = false;
+      for (const selector of selectors) {
+        try {
+          const btn = await page.$(selector);
+          if (btn && await btn.isVisible()) {
+            console.log(`[Playwright] Attempting click on: ${selector}`);
+
+            await page.evaluate((sel) => {
+              const element = document.querySelector(sel) as HTMLElement;
+              if (element) {
+                element.focus();
+                element.click();
+              }
+            }, selector);
+
+            await btn.click({ force: true, delay: 50 }).catch(() => {});
+
+            clicked = true;
+            break;
+          }
+        } catch (e) {
+          console.error(`[Playwright] Error clicking ${selector} for ${cacheKey}:`, e);
+        }
+      }
+
+      if (!clicked) {
+        console.log(`[Playwright] No send button found/clicked for ${cacheKey}, fallback to Enter...`);
         await page.focus(inputSelector);
         await page.keyboard.press('Enter');
-
-        // Also attempt to click the send button in case Enter didn't submit
-        const selectors = [
-          '.message-input-right-button-send .send-button',
-          '.chat-prompt-send-button',
-          'button.send-button'
-        ];
-
-        for (const selector of selectors) {
-          try {
-            const btn = await page.$(selector);
-            if (btn && await btn.isVisible()) {
-              console.log(`[Playwright] Also attempting click on: ${selector}`);
-              await page.evaluate((sel) => {
-                const element = document.querySelector(sel) as HTMLElement;
-                if (element) {
-                  element.focus();
-                  element.click();
-                }
-              }, selector);
-              await btn.click({ force: true, delay: 50 }).catch(() => {});
-            }
-          } catch (e) {
-            // ignore click errors
-          }
-        }
-      } catch (triggerErr: any) {
-        console.error(`[Playwright] Failed to trigger request for ${cacheKey}:`, triggerErr.message);
       }
     });
   });
