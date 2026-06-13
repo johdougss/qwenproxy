@@ -10,6 +10,69 @@ const TIMEOUT_PER_MB = 30000;
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+function addIdleTimeoutToStream(
+  stream: ReadableStream<Uint8Array>,
+  controller: AbortController,
+  idleTimeoutMs: number,
+  label: string,
+  onTimeout?: () => void,
+  onDone?: () => void,
+): ReadableStream<Uint8Array> {
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+
+  const clearIdleTimer = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = undefined;
+    }
+  };
+
+  const resetIdleTimer = () => {
+    clearIdleTimer();
+    idleTimer = setTimeout(() => {
+      const message = `${label} idle timeout after ${idleTimeoutMs}ms without upstream data`;
+      const timeoutError = new Error(message);
+      clearIdleTimer();
+      controller.abort();
+      streamController?.error(timeoutError);
+      onTimeout?.();
+      try { stream.cancel(message).catch(() => {}); } catch {}
+    }, idleTimeoutMs);
+  };
+
+  return new ReadableStream<Uint8Array>({
+    start() {
+      reader = stream.getReader();
+      resetIdleTimer();
+    },
+    async pull(streamController) {
+      try {
+        if (!reader) throw new Error('Stream reader was not initialized');
+        const { done, value } = await reader.read();
+        if (done) {
+          clearIdleTimer();
+          onDone?.();
+          streamController.close();
+          return;
+        }
+        resetIdleTimer();
+        streamController.enqueue(value);
+      } catch (err) {
+        clearIdleTimer();
+        onDone?.();
+        streamController.error(err);
+      }
+    },
+    cancel(reason) {
+      clearIdleTimer();
+      onDone?.();
+      return stream.cancel(reason);
+    },
+  });
+}
+
 function getClientHintsHeaders(): Record<string, string> {
   return {
     'sec-ch-ua': CHROME_CLIENT_HINTS,
@@ -83,6 +146,8 @@ interface WarmPoolEntry {
 
 const warmPool: Map<string, WarmPoolEntry[]> = new Map();
 
+const inFlightWarmChats = new Set<string>();
+
 const refillPromises: Map<string, Promise<void>> = new Map();
 
 const WARM_POOL_SIZE = 10;
@@ -95,6 +160,22 @@ function cleanupStalePool(accountId: string) {
   const now = Date.now();
   const filtered = pool.filter(e => now - e.timestamp <= WARM_POOL_TTL_MS);
   if (filtered.length !== pool.length) warmPool.set(accountId, filtered);
+}
+
+function warmChatKey(accountId: string, chatId: string) {
+  return `${accountId}:${chatId}`;
+}
+
+function markWarmChatInFlight(accountId: string, chatId: string) {
+  inFlightWarmChats.add(warmChatKey(accountId, chatId));
+}
+
+function releaseWarmChat(accountId: string, chatId: string) {
+  inFlightWarmChats.delete(warmChatKey(accountId, chatId));
+}
+
+function isWarmChatInFlight(accountId: string, chatId: string) {
+  return inFlightWarmChats.has(warmChatKey(accountId, chatId));
 }
 
 async function getBasicQwenHeaders(accountId?: string): Promise<Record<string, string>> {
@@ -289,6 +370,7 @@ async function refillPoolForAccount(accountId: string) {
     for (const chatId of unusedChats) {
       if (reused >= need) break;
       if (existingIds.has(chatId)) continue;
+      if (isWarmChatInFlight(accountId, chatId)) continue;
       pool.push({ chatId, headers, accountId, timestamp: Date.now() });
       existingIds.add(chatId);
       reused++;
@@ -348,7 +430,9 @@ export async function getWarmedChat(accountId?: string) {
     await refillPromises.get(key);
   }
   if (pool.length === 0) throw new Error(`Warm pool empty after retry for ${key}`);
-  return pool.shift()!;
+  const entry = pool.shift()!;
+  markWarmChatInFlight(key, entry.chatId);
+  return entry;
 }
 
 export async function warmAllPools(accountIds: string[]) {
@@ -591,6 +675,34 @@ export async function createQwenStream(
 ): Promise<{ stream: ReadableStream, headers: Record<string, string>, uiSessionId: string, controller: AbortController, accountId: string }> {
   let chatId: string;
   let chatHeaders: Record<string, string>;
+  let leasedChat: WarmPoolEntry | undefined;
+  let leasedChatReleased = false;
+
+  const releaseLeasedChat = () => {
+    if (leasedChatReleased || !leasedChat) return;
+    leasedChatReleased = true;
+    releaseWarmChat(leasedChat.accountId, leasedChat.chatId);
+  };
+
+  const wrapLeasedStream = (
+    stream: ReadableStream<Uint8Array>,
+    controller: AbortController,
+    timeoutMs: number,
+    label: string,
+    onTimeout?: () => void,
+  ) => {
+    return addIdleTimeoutToStream(
+      stream,
+      controller,
+      timeoutMs,
+      label,
+      onTimeout,
+      () => {
+        onTimeout?.();
+        releaseLeasedChat();
+      },
+    );
+  };
 
   if (accountId === 'guest') {
     chatHeaders = await getGuestHeaders();
@@ -642,9 +754,8 @@ export async function createQwenStream(
       if (!chatId) throw new Error(`Unexpected guest chat response: ${JSON.stringify(json).slice(0, 200)}`);
     }
   } else {
-    let chatEntry: WarmPoolEntry;
     try {
-      chatEntry = await getWarmedChat(accountId);
+      leasedChat = await getWarmedChat(accountId);
     } catch (err: any) {
       if (err.message?.includes('chat is in progress') || err.message?.includes('The chat is in progress')) {
         const retryAfterMs = 2000 + Math.floor(Math.random() * 2000);
@@ -652,8 +763,8 @@ export async function createQwenStream(
       }
       throw err;
     }
-    chatId = chatEntry.chatId;
-    chatHeaders = chatEntry.headers;
+    chatId = leasedChat.chatId;
+    chatHeaders = leasedChat.headers;
   }
 
   const actualParentId: string | null = null;
@@ -692,7 +803,8 @@ export async function createQwenStream(
     }
   }
 
-  const timestamp = Math.floor(Date.now() / 1000);
+  try {
+    const timestamp = Math.floor(Date.now() / 1000);
   const fid = crypto.randomUUID();
   const model = modelId.replace('-no-thinking', '');
 
@@ -766,7 +878,7 @@ export async function createQwenStream(
 
       if (browserResult.contentType.includes('text/event-stream') && browserResult.status < 400) {
         const controller = new AbortController();
-        return { stream: browserResult.stream, headers: chatHeaders, uiSessionId: chatId, controller, accountId: accountId || 'guest' };
+        return { stream: wrapLeasedStream(browserResult.stream, controller, timeoutMs, `Qwen browser stream ${chatId}`, browserResult.abort), headers: chatHeaders, uiSessionId: chatId, controller, accountId: accountId || 'guest' };
       }
 
       if (browserResult.body) {
@@ -784,7 +896,7 @@ export async function createQwenStream(
             });
             if (retryResult.contentType.includes('text/event-stream') && retryResult.status < 400) {
               const controller = new AbortController();
-              return { stream: retryResult.stream, headers: freshHeaders, uiSessionId: chatId, controller, accountId: accountId || 'guest' };
+              return { stream: wrapLeasedStream(retryResult.stream, controller, timeoutMs, `Qwen browser stream ${chatId}`, retryResult.abort), headers: freshHeaders, uiSessionId: chatId, controller, accountId: accountId || 'guest' };
             }
             if (retryResult.body && (retryResult.body.includes('FAIL_SYS_USER_VALIDATE') || retryResult.body.includes('_____tmd_____'))) {
               throw new QwenUpstreamError('Qwen TMD challenge persists after header refresh.', 'FAIL_SYS_USER_VALIDATE', 403);
@@ -872,7 +984,7 @@ export async function createQwenStream(
 
         const retryContentType = retryResponse.headers.get('content-type') || '';
         if (retryResponse.ok && retryContentType.includes('text/event-stream') && retryResponse.body) {
-          return { stream: retryResponse.body, headers: freshHeaders, uiSessionId: chatId, controller: retryController, accountId: accountId || 'guest' };
+          return { stream: wrapLeasedStream(retryResponse.body, retryController, timeoutMs, `Qwen stream ${chatId}`), headers: freshHeaders, uiSessionId: chatId, controller: retryController, accountId: accountId || 'guest' };
         }
 
         const retryPeek = await retryResponse.clone().text().catch(() => '');
@@ -881,7 +993,7 @@ export async function createQwenStream(
         }
 
         if (retryResponse.ok && retryResponse.body) {
-          return { stream: retryResponse.body, headers: freshHeaders, uiSessionId: chatId, controller: retryController, accountId: accountId || 'guest' };
+          return { stream: wrapLeasedStream(retryResponse.body, retryController, timeoutMs, `Qwen stream ${chatId}`), headers: freshHeaders, uiSessionId: chatId, controller: retryController, accountId: accountId || 'guest' };
         }
       } catch (retryErr) {
         if (retryErr instanceof QwenUpstreamError) throw retryErr;
@@ -904,7 +1016,11 @@ export async function createQwenStream(
     throw new Error(`Failed to fetch from Qwen: ${response.status} ${response.statusText} - ${errText}`);
   }
 
-  return { stream: response.body, headers: chatHeaders, uiSessionId: chatId, controller, accountId: accountId || 'guest' };
+  return { stream: wrapLeasedStream(response.body, controller, timeoutMs, `Qwen stream ${chatId}`), headers: chatHeaders, uiSessionId: chatId, controller, accountId: accountId || 'guest' };
+  } catch (err) {
+    releaseLeasedChat();
+    throw err;
+  }
 }
 
 function handleErrorBody(peekText: string, status: number): never {

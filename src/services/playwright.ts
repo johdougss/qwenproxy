@@ -771,8 +771,6 @@ async function _getQwenHeadersInternal(forceNew = false, accountId?: string): Pr
 
     console.log(`[Playwright] Setting up route interception for ${cacheKey}...`);
     const routeHandler = async (route: any, request: any) => {
-      clearTimeout(timeout);
-
       const reqHeaders = request.headers();
       let uiSessionId = '';
       let uiParentMessageId: string | null = null;
@@ -805,6 +803,8 @@ async function _getQwenHeadersInternal(forceNew = false, accountId?: string): Pr
         await route.continue();
         return;
       }
+
+      clearTimeout(timeout);
 
       console.log(`[Playwright] Successfully intercepted headers for ${cacheKey}.`);
       cache.currentHeaders = extractedHeaders;
@@ -1114,15 +1114,18 @@ export async function browserStreamFetch(
   const enc = new TextEncoder();
 
   let metaResolve!: (value: { status: number; statusText: string; contentType: string; headers: Record<string, string> }) => void;
-  const metaPromise = new Promise<{ status: number; statusText: string; contentType: string; headers: Record<string, string> }>((resolve) => {
+  let metaReject!: (reason: Error) => void;
+  const metaPromise = new Promise<{ status: number; statusText: string; contentType: string; headers: Record<string, string> }>((resolve, reject) => {
     metaResolve = resolve;
+    metaReject = reject;
   });
 
+  const metaTimeoutMs = options.timeoutMs || config.timeouts.chat;
   const metaTimeout = setTimeout(() => {
     streamCallbacks.delete(reqId);
     abortControllers.delete(reqId);
-    metaResolve({ status: 0, statusText: 'Timeout', contentType: '', headers: {} });
-  }, options.timeoutMs || config.timeouts.chat);
+    metaReject(new Error(`Browser stream fetch timed out waiting for response metadata after ${metaTimeoutMs}ms`));
+  }, metaTimeoutMs);
 
   streamCallbacks.set(reqId, {
     onMeta: (meta) => {
@@ -1131,13 +1134,20 @@ export async function browserStreamFetch(
     },
     onChunk: () => {},
     onEnd: () => {},
-    onError: () => {},
+    onError: (msg: string) => {
+      clearTimeout(metaTimeout);
+      metaReject(new Error(msg));
+    },
     onBody: () => {},
   });
 
   let abortFn = () => {};
   let bodyResolve!: (value: string) => void;
-  const bodyPromise = new Promise<string>((resolve) => { bodyResolve = resolve; });
+  let bodyReject!: (reason: Error) => void;
+  const bodyPromise = new Promise<string>((resolve, reject) => {
+    bodyResolve = resolve;
+    bodyReject = reject;
+  });
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -1148,11 +1158,13 @@ export async function browserStreamFetch(
       };
       cb.onEnd = () => {
         try { controller.close(); } catch {}
+        bodyResolve('');
         streamCallbacks.delete(reqId);
         abortControllers.delete(reqId);
       };
       cb.onError = (msg: string) => {
         try { controller.error(new Error(msg)); } catch {}
+        bodyReject(new Error(msg));
         streamCallbacks.delete(reqId);
         abortControllers.delete(reqId);
       };
@@ -1166,7 +1178,7 @@ export async function browserStreamFetch(
         const controller = new AbortController();
         (window as any).__abortControllers = (window as any).__abortControllers || {};
         (window as any).__abortControllers[reqId] = controller;
-        const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || 130000);
+        const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || config.timeouts.chat);
         try {
           const resp = await fetch(url, {
             method: options.method || 'POST',
