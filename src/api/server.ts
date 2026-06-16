@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { serve } from '@hono/node-server'
+import crypto from 'crypto'
 import { config } from '../core/config.js'
 import { metrics } from '../core/metrics.js'
 import { cache } from '../cache/memory-cache.js'
@@ -30,7 +31,9 @@ app.use('/v1/*', async (c, next) => {
       return c.json({ error: 'Missing or invalid Authorization header' }, 401)
     }
     const token = auth.slice(7)
-    if (token !== apiKey) {
+    const tokenBuf = Buffer.from(token)
+    const keyBuf = Buffer.from(apiKey)
+    if (tokenBuf.length !== keyBuf.length || !crypto.timingSafeEqual(tokenBuf, keyBuf)) {
       return c.json({ error: 'Invalid API key' }, 401)
     }
   }
@@ -79,12 +82,15 @@ export async function startServer(): Promise<void> {
   
   if (accounts.length > 0) {
     console.log(`[Server] Pre-warming ${accounts.length} configured account(s) in parallel...`)
+    const { getAccountCredentials } = await import('../core/accounts.js')
     await Promise.all(
-      accounts.map(account =>
-        initPlaywrightForAccount(account, config.browser.headless).catch((err: any) => {
+      accounts.map(account => {
+        const creds = getAccountCredentials(account.id)
+        if (!creds) return Promise.resolve()
+        return initPlaywrightForAccount(creds, config.browser.headless).catch((err: any) => {
           console.error(`[Server] Failed to initialize account ${account.email}:`, err.message)
         })
-      )
+      })
     )
     console.log('[Server] Pre-fetching headers for all accounts in background...')
     const { warmAllPools } = await import('../services/qwen.js')

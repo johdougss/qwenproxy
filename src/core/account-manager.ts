@@ -1,5 +1,4 @@
-import { QwenAccount, loadAccounts, updateAccountCooldown } from './accounts.js'
-import { config } from './config.js'
+import { QwenAccount, loadAccounts, updateAccountCooldown, invalidateAccountsCache as invalidateAccountsCacheSource } from './accounts.js'
 
 let currentIndex = 0
 
@@ -10,38 +9,28 @@ interface CooldownEntry {
 
 const cooldowns = new Map<string, CooldownEntry>()
 
-const DEFAULT_COOLDOWN_MS = 3 * 60 * 1000 // 3 minutes
+const DEFAULT_COOLDOWN_MS = 3 * 60 * 1000
 
-let accountsCache: QwenAccount[] | null = null
-let accountsCacheTimestamp = 0
-const ACCOUNTS_CACHE_TTL = config.cache.defaultTTL * 1000
-
-function getCachedAccounts(): QwenAccount[] {
+function getAccountsWithCooldownSync(): QwenAccount[] {
+  const accounts = loadAccounts()
   const now = Date.now()
-  if (!accountsCache || (now - accountsCacheTimestamp) > ACCOUNTS_CACHE_TTL) {
-    accountsCache = loadAccounts()
-    accountsCacheTimestamp = now
 
-    // Sync memory cooldowns map from database values
-    for (const account of accountsCache) {
-      if (account.cooldown_until && account.cooldown_until > now) {
-        cooldowns.set(account.id, {
-          until: account.cooldown_until,
-          reason: account.cooldown_reason || 'RateLimited',
-        })
-      } else {
-        if (cooldowns.has(account.id)) {
-          cooldowns.delete(account.id)
-        }
-      }
+  for (const account of accounts) {
+    if (account.cooldown_until && account.cooldown_until > now) {
+      cooldowns.set(account.id, {
+        until: account.cooldown_until,
+        reason: account.cooldown_reason || 'RateLimited',
+      })
+    } else {
+      cooldowns.delete(account.id)
     }
   }
-  return accountsCache
+
+  return accounts
 }
 
 export function invalidateAccountsCache(): void {
-  accountsCache = null
-  accountsCacheTimestamp = 0
+  invalidateAccountsCacheSource()
 }
 
 export function markAccountRateLimited(accountId: string, cooldownMs?: number, reason?: string): void {
@@ -99,7 +88,7 @@ function isAccountOnCooldown(accountId: string): boolean {
 }
 
 export function getNextAccount(forceReset?: boolean): QwenAccount | null {
-  const accounts = getCachedAccounts()
+  const accounts = getAccountsWithCooldownSync()
   if (accounts.length === 0) {
     return null
   }
@@ -130,7 +119,7 @@ export function getNextAccount(forceReset?: boolean): QwenAccount | null {
 }
 
 export function getNextAvailableAccount(triedAccountIds?: Set<string> | string): QwenAccount | null {
-  const accounts = getCachedAccounts()
+  const accounts = getAccountsWithCooldownSync()
   if (accounts.length === 0) return null
 
   let triedSet: Set<string>
@@ -166,7 +155,7 @@ export function getNextAvailableAccount(triedAccountIds?: Set<string> | string):
 }
 
 export function getAccountCount(): number {
-  return getCachedAccounts().length
+  return getAccountsWithCooldownSync().length
 }
 
 export function getCooldownStatus(): Record<string, { remainingMs: number; reason: string }> {
