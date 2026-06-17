@@ -1,3 +1,10 @@
+## [1.7.2](https://github.com/pedrofariasx/qwenproxy/compare/v1.7.1...v1.7.2) (2026-06-17)
+
+
+### Performance Improvements
+
+* optimize Docker setup with noble base, shm_size, resource limits and healthcheck ([f0196e2](https://github.com/pedrofariasx/qwenproxy/commit/f0196e2afb93418053ff15c4ec057b7bc7d0d1c1))
+
 ## [1.7.1](https://github.com/pedrofariasx/qwenproxy/compare/v1.7.0...v1.7.1) (2026-06-16)
 
 
