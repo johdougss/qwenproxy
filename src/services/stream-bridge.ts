@@ -128,6 +128,7 @@ export async function browserStreamFetch(
     bodyResolve = resolve;
     bodyReject = reject;
   });
+  bodyPromise.catch(() => {});
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
