@@ -18,7 +18,7 @@ test('solveBaxiaCaptcha: returns false immediately if iframe is not visible', as
 });
 
 test('solveBaxiaCaptcha: handles successful solve workflow', async () => {
-  let mouseMoveCalls: any[] = [];
+  const mouseMoveCalls: any[] = [];
   let mouseDownCalls = 0;
   let mouseUpCalls = 0;
   let isVisibleCalls = 0;

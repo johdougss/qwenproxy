@@ -113,7 +113,7 @@ export function startCaptchaWatcher(page: Page, timeoutMs: number) {
           console.log('[Captcha] Baxia captcha detected on page. Solving...');
           await solveBaxiaCaptcha(page);
         }
-      } catch (err) {
+      } catch {
         // ignore
       }
       await sleep(1000);
