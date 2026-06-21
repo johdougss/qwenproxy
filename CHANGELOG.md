@@ -1,3 +1,10 @@
+## [1.10.1](https://github.com/pedrofariasx/qwenproxy/compare/v1.10.0...v1.10.1) (2026-06-21)
+
+
+### Bug Fixes
+
+* add mouse lock to prevent session-keeper interference during captcha solving ([121bc01](https://github.com/pedrofariasx/qwenproxy/commit/121bc01555636e0ae5886763f8925b85cc2bda5e))
+
 # [1.10.0](https://github.com/pedrofariasx/qwenproxy/compare/v1.9.0...v1.10.0) (2026-06-21)
 
 
