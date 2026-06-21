@@ -97,6 +97,9 @@ export async function startServer(): Promise<void> {
     warmAllPools(accounts.map(a => a.id)).catch(() => {})
   }
 
+  const { startSessionKeeper } = await import('../services/session-keeper.js')
+  startSessionKeeper()
+
   watchdog = new Watchdog()
   watchdog.start()
 
@@ -112,6 +115,8 @@ export async function startServer(): Promise<void> {
 
   const shutdown = async (signal: string) => {
     console.log(`Received ${signal}, shutting down gracefully...`)
+    const { stopSessionKeeper } = await import('../services/session-keeper.js')
+    stopSessionKeeper()
     watchdog.stop()
     metrics.stopCollection()
     await cache.close()
