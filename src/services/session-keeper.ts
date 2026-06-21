@@ -2,6 +2,7 @@ import type { Page } from 'playwright';
 import { accountPages, getPageForAccount, sleep } from './browser-manager.js';
 import { humanMouseMove, humanScroll, humanDelay } from './human-behavior.js';
 import { config } from '../core/config.js';
+import { isMouseLocked } from './mouse-lock.js';
 
 const KEEP_ALIVE_INTERVAL_MS = 3 * 60 * 1000;
 const NAVIGATION_INTERVAL_MS = 8 * 60 * 1000;
@@ -65,10 +66,22 @@ export function startSessionKeeper(): void {
   intervalId = setInterval(async () => {
     if (!running) return;
 
+    if (isMouseLocked()) {
+      return;
+    }
+
     for (const [accountId, page] of accountPages.entries()) {
+      if (!running) return;
+      if (isMouseLocked()) {
+        return;
+      }
       if (page.isClosed()) continue;
       await performKeepAlive(accountId, page);
       await sleep(humanDelay(1000, 3000));
+    }
+
+    if (isMouseLocked()) {
+      return;
     }
 
     const defaultPage = getPageForAccount();

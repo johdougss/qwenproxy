@@ -1,5 +1,6 @@
 import type { Page } from 'playwright';
 import { humanDrag } from './human-behavior.js';
+import { acquireMouseLock, releaseMouseLock } from './mouse-lock.js';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -14,8 +15,14 @@ export async function solveBaxiaCaptcha(page: Page): Promise<boolean> {
     return false;
   }
 
+  while (!acquireMouseLock('captcha-solver')) {
+    console.log('[Captcha] Waiting for mouse lock to be released before solving...');
+    await sleep(200);
+  }
+
   console.log('[Captcha] Baxia captcha iframe detected. Attempting to solve...');
 
+  try {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const frame = page.frameLocator(iframeSelector);
@@ -73,6 +80,9 @@ export async function solveBaxiaCaptcha(page: Page): Promise<boolean> {
 
   console.error('[Captcha] Failed to solve Baxia captcha after 3 attempts.');
   return false;
+  } finally {
+    releaseMouseLock('captcha-solver');
+  }
 }
 
 /**
