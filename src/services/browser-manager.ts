@@ -579,13 +579,13 @@ export async function initPlaywrightForAccount(account: QwenAccount, _headless =
   }
 
   try {
-    await acctPage.goto('https://chat.qwen.ai/', { waitUntil: 'domcontentloaded', timeout: config.timeouts.navigation });
+    await acctPage.goto('https://chat.qwen.ai/c/new-chat', { waitUntil: 'domcontentloaded', timeout: config.timeouts.navigation });
     const url = acctPage.url();
     if (url.includes('auth') || url.includes('login')) {
       if (account.email && account.password) {
         console.log(`[Playwright] Session expired for ${account.email}, re-logging in...`);
         await loginToQwenWithContext(acctContext, acctPage, account.email, account.password);
-        await acctPage.goto('https://chat.qwen.ai/', { waitUntil: 'domcontentloaded', timeout: config.timeouts.navigation });
+        await acctPage.goto('https://chat.qwen.ai/c/new-chat', { waitUntil: 'domcontentloaded', timeout: config.timeouts.navigation });
       } else {
         console.warn(`[Playwright] Session expired for account ${account.id} but no credentials available for re-login.`);
       }

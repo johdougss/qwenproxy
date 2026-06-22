@@ -340,9 +340,9 @@ async function _getQwenHeadersInternalOnce(forceNew = false, accountId?: string)
   const isOnQwen = currentUrl.includes('chat.qwen.ai');
   const _isOnSpecificChat = isOnQwen && /\/c\//.test(currentUrl);
 
-  if (!isOnQwen || forceNew) {
-    console.log(`[Playwright] Navigating to Qwen home for ${cacheKey}... (Current: ${currentUrl})`);
-    await page.goto('https://chat.qwen.ai/', { waitUntil: 'domcontentloaded' });
+  if (!isOnQwen) {
+    console.log(`[Playwright] Navigating to stable Qwen new-chat page for ${cacheKey}... (Current: ${currentUrl})`);
+    await page.goto('https://chat.qwen.ai/c/new-chat', { waitUntil: 'domcontentloaded' });
   }
 
   const isLoginPage = page.url().includes('login') || (await page.$('input[type="email"], input[placeholder*="Email"]'));

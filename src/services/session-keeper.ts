@@ -38,7 +38,7 @@ async function performKeepAlive(accountId: string, page: Page): Promise<void> {
     if (now - lastNav > NAVIGATION_INTERVAL_MS) {
       const currentUrl = page.url();
       if (!currentUrl.includes('chat.qwen.ai')) {
-        await page.goto('https://chat.qwen.ai/', { waitUntil: 'domcontentloaded', timeout: config.timeouts.navigation });
+        await page.goto('https://chat.qwen.ai/c/new-chat', { waitUntil: 'domcontentloaded', timeout: config.timeouts.navigation });
       } else {
         await page.evaluate(() => {
           try {

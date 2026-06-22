@@ -4,12 +4,13 @@ import { acquireMouseLock, releaseMouseLock } from './mouse-lock.js';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+export const BAXIA_IFRAME_SELECTOR = 'iframe#baxia-dialog-content, iframe[src*="_____tmd_____/punish"]';
+
 /**
  * Solves the Baxia slidein captcha inside an iframe on the page.
  */
 export async function solveBaxiaCaptcha(page: Page): Promise<boolean> {
-  const iframeSelector = 'iframe#baxia-dialog-content, iframe[src*="_____tmd_____/punish"]';
-  const iframeLocator = page.locator(iframeSelector).first();
+  const iframeLocator = page.locator(BAXIA_IFRAME_SELECTOR).first();
 
   if (!(await iframeLocator.isVisible().catch(() => false))) {
     return false;
@@ -25,7 +26,7 @@ export async function solveBaxiaCaptcha(page: Page): Promise<boolean> {
   try {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const frame = page.frameLocator(iframeSelector);
+      const frame = page.frameLocator(BAXIA_IFRAME_SELECTOR);
       const slider = frame.locator('#nc_1_n1z, .btn_slide');
 
       // Wait for the slider element to be visible inside the frame
@@ -96,8 +97,7 @@ export function startCaptchaWatcher(page: Page, timeoutMs: number) {
     while (!finished && (Date.now() - start < timeoutMs)) {
       try {
         if (page.isClosed()) break;
-        const iframeSelector = 'iframe#baxia-dialog-content, iframe[src*="_____tmd_____/punish"]';
-        const hasCaptcha = await page.locator(iframeSelector).first().isVisible().catch(() => false);
+        const hasCaptcha = await page.locator(BAXIA_IFRAME_SELECTOR).first().isVisible().catch(() => false);
         if (hasCaptcha) {
           console.log('[Captcha] Baxia captcha detected on page. Solving...');
           await solveBaxiaCaptcha(page);

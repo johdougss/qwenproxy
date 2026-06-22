@@ -6,6 +6,7 @@ import { getWarmedChat, releaseWarmChat } from './warm-pool.js';
 import { getClientHintsHeaders, Mutex } from './browser-manager.js';
 import type { Page } from 'playwright';
 import { releaseAccountInUse } from '../core/account-manager.js';
+import { BAXIA_IFRAME_SELECTOR, solveBaxiaCaptcha } from './captcha-solver.js';
 import crypto from 'crypto';
 
 const CACHED_TIMEZONE = new Date().toString().split(' (')[0];
@@ -70,9 +71,25 @@ async function openIsolatedQwenPage(basePage: Page, targetUrl = 'https://chat.qw
   return page;
 }
 
-async function openIsolatedCompletionPage(basePage: Page, chatId: string, accountId?: string): Promise<Page> {
-  const targetUrl = accountId === 'guest' ? 'https://chat.qwen.ai/c/guest' : `https://chat.qwen.ai/c/${chatId}`;
-  return openIsolatedQwenPage(basePage, targetUrl);
+async function waitForTmdCaptcha(page: Page, timeoutMs: number): Promise<boolean> {
+  try {
+    await page.locator(BAXIA_IFRAME_SELECTOR).first().waitFor({ state: 'visible', timeout: timeoutMs });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function solveTmdChallengeIfPresent(page: Page, label: string): Promise<boolean> {
+  const timeoutMs = Math.min(15000, Math.max(3000, config.timeouts.headers));
+  const hasCaptcha = await waitForTmdCaptcha(page, timeoutMs);
+  if (!hasCaptcha) {
+    console.warn(`[Qwen] TMD challenge detected for ${label}, but no Baxia iframe appeared within ${timeoutMs}ms.`);
+    return false;
+  }
+
+  console.log(`[Qwen] TMD Baxia iframe detected for ${label}; attempting solver before retry...`);
+  return solveBaxiaCaptcha(page);
 }
 
 export interface QwenMessage {
@@ -656,9 +673,8 @@ export async function createQwenStream(
 
   const page = getPageForAccount(accountId);
   if (page && !page.isClosed() && page.url().includes('chat.qwen.ai')) {
-    let completionPage: Page | null = null;
+    const completionPage = page;
     try {
-      completionPage = await openIsolatedCompletionPage(page, chatId, accountId);
       const browserResult = await browserStreamFetch(completionPage, url, {
         method: 'POST',
         headers: buildBrowserCompletionHeaders(chatHeaders),
@@ -671,7 +687,6 @@ export async function createQwenStream(
         return {
           stream: wrapLeasedStream(browserResult.stream, controller, timeoutMs, `Qwen browser stream ${chatId}`, () => {
             browserResult.abort();
-            completionPage?.close().catch(() => {});
           }),
           headers: chatHeaders,
           uiSessionId: chatId,
@@ -683,8 +698,9 @@ export async function createQwenStream(
       if (browserResult.body) {
         const peekText = browserResult.body;
         if (isTmdChallenge(peekText)) {
-          console.warn('[Qwen] TMD challenge detected via browser, refreshing headers and retrying...');
+          console.warn('[Qwen] TMD challenge detected via browser, attempting captcha solve before retry...');
           try {
+            await solveTmdChallengeIfPresent(completionPage, `chat ${chatId}`);
             const { headers: freshHeaders } = await getQwenHeaders(true, accountId);
             await sleep(500 + Math.floor(Math.random() * 1000));
             const retryResult = await browserStreamFetch(completionPage, url, {
@@ -698,7 +714,6 @@ export async function createQwenStream(
               return {
                 stream: wrapLeasedStream(retryResult.stream, controller, timeoutMs, `Qwen browser stream ${chatId}`, () => {
                   retryResult.abort();
-                  completionPage?.close().catch(() => {});
                 }),
                 headers: freshHeaders,
                 uiSessionId: chatId,
@@ -707,7 +722,8 @@ export async function createQwenStream(
               };
             }
             if (retryResult.body && isTmdChallenge(retryResult.body)) {
-              throw new QwenUpstreamError('Qwen TMD challenge persists after header refresh.', 'FAIL_SYS_USER_VALIDATE', 403);
+              await solveTmdChallengeIfPresent(completionPage, `chat ${chatId} retry`);
+              throw new QwenUpstreamError('Qwen TMD challenge persists after captcha solve and header refresh.', 'FAIL_SYS_USER_VALIDATE', 403);
             }
             if (retryResult.body) {
               handleErrorBody(retryResult.body, retryResult.status);
@@ -716,15 +732,19 @@ export async function createQwenStream(
             if (retryErr instanceof QwenUpstreamError) throw retryErr;
             console.error('[Qwen] Browser TMD retry failed:', (retryErr as Error).message);
           }
-          throw new QwenUpstreamError('Qwen TMD anti-bot challenge detected. Headers were refreshed but the challenge persists.', 'FAIL_SYS_USER_VALIDATE', 403);
+          throw new QwenUpstreamError('Qwen TMD anti-bot challenge detected. Captcha solve/header refresh was attempted but the challenge persists.', 'FAIL_SYS_USER_VALIDATE', 403);
         }
         handleErrorBody(peekText, browserResult.status);
       }
+      throw new Error(`Browser stream fetch returned non-stream response without body: ${browserResult.status} ${browserResult.statusText}`);
     } catch (browserErr: any) {
-      await completionPage?.close().catch(() => {});
       if (browserErr instanceof QwenUpstreamError || browserErr instanceof RetryableQwenStreamError) throw browserErr;
       throw new Error(`Browser stream fetch failed with active Qwen page: ${browserErr.message}`, { cause: browserErr });
     }
+  }
+
+  if (!process.env.TEST_MOCK_PLAYWRIGHT) {
+    throw new Error(`Cannot fetch Qwen completion outside an active Qwen browser page for ${accountId || 'global'}. Refusing direct fetch to avoid TMD challenge.`);
   }
 
   const controller = new AbortController();
@@ -745,8 +765,12 @@ export async function createQwenStream(
   if (response.ok && !responseContentType.includes('text/event-stream') && response.body) {
     const peekText = await response.clone().text().catch(() => '');
     if (isTmdChallenge(peekText)) {
-      console.warn('[Qwen] TMD challenge detected, refreshing headers and retrying...');
+      console.warn('[Qwen] TMD challenge detected, attempting browser captcha solve before retry...');
       try {
+        const challengePage = getPageForAccount(accountId);
+        if (challengePage && !challengePage.isClosed() && challengePage.url().includes('chat.qwen.ai')) {
+          await solveTmdChallengeIfPresent(challengePage, `chat ${chatId}`);
+        }
         const { headers: freshHeaders } = await getQwenHeaders(true, accountId);
         await sleep(500 + Math.floor(Math.random() * 1000));
         const retryController = new AbortController();
@@ -766,7 +790,11 @@ export async function createQwenStream(
 
         const retryPeek = await retryResponse.clone().text().catch(() => '');
         if (isTmdChallenge(retryPeek)) {
-          throw new QwenUpstreamError('Qwen TMD challenge persists after header refresh. The account may need manual captcha resolution.', 'FAIL_SYS_USER_VALIDATE', 403);
+          const challengePage = getPageForAccount(accountId);
+          if (challengePage && !challengePage.isClosed() && challengePage.url().includes('chat.qwen.ai')) {
+            await solveTmdChallengeIfPresent(challengePage, `chat ${chatId} retry`);
+          }
+          throw new QwenUpstreamError('Qwen TMD challenge persists after captcha solve and header refresh. The account may need manual captcha resolution.', 'FAIL_SYS_USER_VALIDATE', 403);
         }
 
         if (retryResponse.ok && retryResponse.body) {
@@ -777,7 +805,7 @@ export async function createQwenStream(
         console.error('[Qwen] TMD retry failed:', (retryErr as Error).message);
       }
 
-      throw new QwenUpstreamError('Qwen TMD anti-bot challenge detected. Headers were refreshed but the challenge persists.', 'FAIL_SYS_USER_VALIDATE', 403);
+      throw new QwenUpstreamError('Qwen TMD anti-bot challenge detected. Captcha solve/header refresh was attempted but the challenge persists.', 'FAIL_SYS_USER_VALIDATE', 403);
     } else {
       handleErrorBody(peekText, response.status);
     }
