@@ -1,3 +1,10 @@
+# [1.12.0](https://github.com/pedrofariasx/qwenproxy/compare/v1.11.0...v1.12.0) (2026-06-22)
+
+
+### Features
+
+* isolate single-account concurrency lanes ([ba953e8](https://github.com/pedrofariasx/qwenproxy/commit/ba953e8ce17a337582f971381c257ae3d7fc1ff8))
+
 # [1.11.0](https://github.com/pedrofariasx/qwenproxy/compare/v1.10.2...v1.11.0) (2026-06-22)
 
 
