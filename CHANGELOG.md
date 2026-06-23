@@ -1,3 +1,10 @@
+## [1.12.2](https://github.com/pedrofariasx/qwenproxy/compare/v1.12.1...v1.12.2) (2026-06-23)
+
+
+### Bug Fixes
+
+* improve editor tool call parsing ([62e6fac](https://github.com/pedrofariasx/qwenproxy/commit/62e6fac754c0ccbcd1547b9ad8717c2ab1001ce1))
+
 ## [1.12.1](https://github.com/pedrofariasx/qwenproxy/compare/v1.12.0...v1.12.1) (2026-06-22)
 
 
